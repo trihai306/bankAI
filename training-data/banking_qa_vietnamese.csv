@@ -1,0 +1,11 @@
+instruction,input,output
+"Trả lời câu hỏi về dịch vụ ngân hàng","Làm sao để đăng ký Mobile Banking?","Để đăng ký Mobile Banking: 1) Tải app ngân hàng trên CH Play/App Store, 2) Chọn 'Đăng ký mới', 3) Nhập số tài khoản/số thẻ, 4) Xác thực OTP qua SMS, 5) Tạo username và mật khẩu. Hoặc đến chi nhánh mang CMND để được hỗ trợ."
+"Trả lời câu hỏi về dịch vụ ngân hàng","Hủy thẻ tín dụng có mất phí không?","Hủy thẻ tín dụng miễn phí nếu: 1) Đã thanh toán hết nợ, 2) Không vi phạm hợp đồng. Quy trình: Gọi hotline yêu cầu hủy → Thanh toán dư nợ (nếu có) → Cắt thẻ và gửi lại ngân hàng hoặc đến chi nhánh. Thời gian xử lý: 7-15 ngày."
+"Trả lời câu hỏi về dịch vụ ngân hàng","Lãi suất vay tín chấp ngân hàng nào rẻ nhất?","Lãi suất vay tín chấp dao động 10-24%/năm. Các ngân hàng có lãi suất tốt: VPBank (từ 11%/năm), VIB (từ 12%/năm), TPBank (từ 13%/năm). Lãi suất phụ thuộc: Thu nhập, lịch sử tín dụng, thời hạn vay. Nên so sánh nhiều ngân hàng trước khi quyết định."
+"Trả lời câu hỏi về dịch vụ ngân hàng","Thẻ từ và thẻ chip khác nhau như thế nào?","Thẻ từ: Công nghệ cũ, dễ bị đánh cắp thông tin, đang bị thay thế. Thẻ chip: Bảo mật cao hơn, có chip điện tử, khó sao chép. Từ 2021 Việt Nam chuyển đổi hoàn toàn sang thẻ chip. Miễn phí đổi thẻ từ sang chip tại hầu hết ngân hàng."
+"Trả lời câu hỏi về dịch vụ ngân hàng","Giao dịch online bị lỗi, tiền bị trừ nhưng chưa nhận được hàng?","Khi giao dịch online bị lỗi: 1) Screenshot mã giao dịch, 2) Kiểm tra sao kê tài khoản, 3) Liên hệ hotline ngân hàng để khiếu nại (trong 24h), 4) Cung cấp: Mã GD, thời gian, số tiền. Ngân hàng sẽ hoàn tiền trong 15-30 ngày nếu xác nhận lỗi."
+"Sửa lỗi câu văn","toi muon gui tiet kiem ky han 12 thang lai cao","Tôi muốn gửi tiết kiệm kỳ hạn 12 tháng lãi cao."
+"Sửa lỗi câu văn","ban co the huong dan cach mo tai khoan ngan hang khong","Bạn có thể hướng dẫn cách mở tài khoản ngân hàng không?"
+"Sửa lỗi câu văn","phi chuyen khoan lien ngan hang qua internet banking","Phí chuyển khoản liên ngân hàng qua Internet Banking."
+"Sửa lỗi câu văn","lam sao de kiem tra lich su giao dich the tin dung","Làm sao để kiểm tra lịch sử giao dịch thẻ tín dụng?"
+"Sửa lỗi câu văn","toi bi quen ma pin the atm phai lam gi day","Tôi bị quên mã PIN thẻ ATM phải làm gì đây?"

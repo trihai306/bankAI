@@ -1,0 +1,77 @@
+[
+    {
+        "instruction": "Trả lời câu hỏi về dịch vụ ngân hàng",
+        "input": "Làm sao để mở tài khoản tiết kiệm online?",
+        "output": "Để mở tài khoản tiết kiệm online, bạn cần: 1) Đăng nhập ứng dụng ngân hàng, 2) Chọn 'Mở sổ tiết kiệm', 3) Nhập số tiền gửi và kỳ hạn, 4) Xác nhận OTP. Lãi suất dao động 4-6%/năm tùy kỳ hạn."
+    },
+    {
+        "instruction": "Trả lời câu hỏi về dịch vụ ngân hàng",
+        "input": "Làm thẻ tín dụng mất bao lâu?",
+        "output": "Thời gian làm thẻ tín dụng thường 7-10 ngày làm việc. Bạn cần chuẩn bị: CMND/CCCD, Giấy xác nhận thu nhập, Hộ khẩu hoặc sổ tạm trú. Hạn mức phụ thuộc vào thu nhập và lịch sử tín dụng."
+    },
+    {
+        "instruction": "Trả lời câu hỏi về dịch vụ ngân hàng",
+        "input": "Chuyển tiền nhanh 24/7 là gì?",
+        "output": "Chuyển tiền nhanh 24/7 (Napas 247) là dịch vụ chuyển khoản liên ngân hàng trong vòng 10 giây, hoạt động cả ngày lễ và cuối tuần. Phí giao dịch: 1,650đ - 3,300đ tùy ngân hàng, hạn mức 500 triệu/giao dịch."
+    },
+    {
+        "instruction": "Trả lời câu hỏi về dịch vụ ngân hàng",
+        "input": "Vay tín chấp cần điều kiện gì?",
+        "output": "Điều kiện vay tín chấp: 1) Tuổi 20-55, có thu nhập ổn định từ 5 triệu/tháng, 2) Thời gian công tác tối thiểu 6 tháng, 3) Không nợ xấu tại ngân hàng. Lãi suất 1-2%/tháng, hạn mức lên đến 20 lần thu nhập."
+    },
+    {
+        "instruction": "Trả lời câu hỏi về dịch vụ ngân hàng",
+        "input": "SMS Banking có tốn phí không?",
+        "output": "SMS Banking miễn phí khi đăng ký, chỉ tính phí tin nhắn SMS thông thường từ nhà mạng (khoảng 200đ/tin). Bạn nhận thông báo giao dịch, số dư tài khoản realtime. Để đăng ký, gửi DK<SỐ TK> đến 9xxx."
+    },
+    {
+        "instruction": "Trả lời câu hỏi về dịch vụ ngân hàng",
+        "input": "Mất thẻ ATM phải làm gì?",
+        "output": "Khi mất thẻ ATM: 1) Gọi hotline ngân hàng ngay để khóa thẻ (24/7), 2) Đến chi nhánh mang CMND để báo mất và làm lại thẻ mới, 3) Phí làm lại thẻ: 50,000đ - 100,000đ. Thời gian nhận thẻ mới: 3-5 ngày."
+    },
+    {
+        "instruction": "Trả lời câu hỏi về dịch vụ ngân hàng",
+        "input": "Lãi suất vay mua nhà hiện nay là bao nhiêu?",
+        "output": "Lãi suất vay mua nhà dao động 8-12%/năm tùy ngân hàng và thời gian vay. Lãi suất ưu đãi 6-8%/năm trong 6-12 tháng đầu. Hỗ trợ vay tối đa 70-80% giá trị nhà, thời hạn lên đến 25 năm."
+    },
+    {
+        "instruction": "Trả lời câu hỏi về dịch vụ ngân hàng",
+        "input": "Internet Banking có an toàn không?",
+        "output": "Internet Banking rất an toàn với: 1) Mã hóa SSL 256-bit, 2) Xác thực 2 lớp (mật khẩu + OTP), 3) Thông báo giao dịch realtime. Lưu ý: Không chia sẻ mật khẩu, OTP với ai, tắt máy tính sau khi giao dịch, cập nhật phần mềm diệt virus."
+    },
+    {
+        "instruction": "Trả lời câu hỏi về dịch vụ ngân hàng",
+        "input": "Rút tiền ATM mất phí bao nhiêu?",
+        "output": "Phí rút tiền ATM: Miễn phí tại ATM cùng ngân hàng, 1,100đ - 3,300đ tại ATM liên ngân hàng (tùy ngân hàng). Hạn mức: 5-50 triệu/ngày tùy loại thẻ. Giao dịch từ 21h-6h có thể tính phí ngoài giờ."
+    },
+    {
+        "instruction": "Trả lời câu hỏi về dịch vụ ngân hàng",
+        "input": "Đăng ký eKYC là gì?",
+        "output": "eKYC (Electronic Know Your Customer) là xác minh danh tính qua video call: 1) Chụp CMND/CCCD 2 mặt, 2) Video ghi hình khuôn mặt và đọc thông tin, 3) AI xác thực trong 30 giây. Mở tài khoản 100% online không cần đến ngân hàng."
+    },
+    {
+        "instruction": "Sửa lỗi câu văn banking",
+        "input": "toi muon chuyen tien cho ban nhung quen mat khau",
+        "output": "Tôi muốn chuyển tiền cho bạn nhưng quên mất khẩu."
+    },
+    {
+        "instruction": "Sửa lỗi câu văn banking",
+        "input": "lam sao de mo tai khoan tiet kiem lai suat cao",
+        "output": "Làm sao để mở tài khoản tiết kiệm lãi suất cao?"
+    },
+    {
+        "instruction": "Sửa lỗi câu văn banking",
+        "input": "ngan hang nao cho vay tien mua nha tot nhat",
+        "output": "Ngân hàng nào cho vay tiền mua nhà tốt nhất?"
+    },
+    {
+        "instruction": "Sửa lỗi câu văn banking",
+        "input": "the tin dung co gioi han chi tieu khong",
+        "output": "Thẻ tín dụng có giới hạn chi tiêu không?"
+    },
+    {
+        "instruction": "Sửa lỗi câu văn banking",
+        "input": "bi mat the atm phai lam gi khong",
+        "output": "Bị mất thẻ ATM phải làm gì không?"
+    }
+]

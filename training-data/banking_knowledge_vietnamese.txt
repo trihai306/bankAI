@@ -1,0 +1,72 @@
+# Banking Customer Service Training Data (Vietnamese)
+
+## Instruction-Response Pairs
+
+### Q: Làm sao để đổi mã PIN thẻ ATM?
+A: Để đổi mã PIN thẻ ATM: 1) Tại ATM: Chọn "Đổi mã PIN" → Nhập PIN cũ → Nhập PIN mới 2 lần, 2) Qua Internet Banking: Vào mục "Quản lý thẻ" → Đổi PIN, 3) Tại chi nhánh: Mang CMND + thẻ ATM. Lưu ý: Mã PIN 6 số, tránh dùng số đơn giản (111111, 123456).
+
+### Q: Thời gian xử lý khiếu nại giao dịch mất bao lâu?
+A: Thời gian xử lý khiếu nại: 1) Giao dịch ATM: 15-30 ngày, 2) Giao dịch online: 7-15 ngày, 3) Giao dịch thẻ: 30-45 ngày (có thể lên 90 ngày cho tranh chấp quốc tế). Ngân hàng sẽ SMS/email thông báo kết quả.
+
+### Q: Tài khoản bị khóa phải làm sao?
+A: Tài khoản bị khóa do: 1) Nhập sai mật khẩu/PIN liên tục 5 lần, 2) Giao dịch bất thường, 3) Lệnh phong tỏa của cơ quan chức năng. Xử lý: Gọi hotline hoặc đến chi nhánh mang CMND để mở khóa. Thời gian: 10-30 phút.
+
+### Q: Vay tín chấp online có lừa đảo không?
+A: Vay tín chấp online qua ngân hàng/công ty tài chính được cấp phép là an toàn. Dấu hiệu lừa đảo: 1) Yêu cầu chuyển tiền trước, 2) Hứa duyệt 100% không cần điều kiện, 3) Không có giấy phép kinh doanh. Chỉ vay tại: Ngân hàng TMCP, FE Credit, Home Credit, VPBank, VIB.
+
+### Q: Sổ tiết kiệm giấy có còn giá trị không?
+A: Sổ tiết kiệm giấy vẫn có giá trị pháp lý và được bảo vệ. Ưu điểm: Bảo mật cao, không lo hacker. Nhược điểm: Mất sổ phải báo, không theo dõi online, rút tiền phải đến ngân hàng. Có thể chuyển đổi sang sổ điện tử (ePassbook) miễn phí.
+
+---
+
+## Text Correction Pairs
+
+Input: "cho toi biet so du tai khoan hien tai"
+Output: "Cho tôi biết số dư tài khoản hiện tại."
+
+Input: "toi can ho tro ve dich vu ngan hang dien tu"
+Output: "Tôi cần hỗ trợ về dịch vụ ngân hàng điện tử."
+
+Input: "lam the gi de tang han muc tin dung"
+Output: "Làm thế gì để tăng hạn mức tín dụng?"
+
+Input: "phi rut tien o atm khac ngan hang la bao nhieu"
+Output: "Phí rút tiền ở ATM khác ngân hàng là bao nhiêu?"
+
+Input: "toi bi mat the tai khoan phai lam sao"
+Output: "Tôi bị mất thẻ tài khoản phải làm sao?"
+
+---
+
+## Banking Terminology (Vietnamese)
+
+- Tài khoản thanh toán: Current account
+- Tài khoản tiết kiệm: Savings account
+- Thẻ ghi nợ: Debit card
+- Thẻ tín dụng: Credit card
+- Chuyển khoản liên ngân hàng: Interbank transfer
+- Lãi suất: Interest rate
+- Hạn mức: Credit limit
+- Kỳ hạn: Maturity period
+- Nợ xấu: Bad debt / Non-performing loan
+- Thấu chi: Overdraft
+- Bảo lãnh: Guarantee
+- Cầm cố / Thế chấp: Mortgage / Collateral
+- Tín chấp: Unsecured loan
+- OTP (One-Time Password): Mã xác thực một lần
+- eKYC: Xác minh danh tính điện tử
+
+---
+
+## Common Customer Intents
+
+1. Account inquiry (Hỏi thông tin tài khoản)
+2. Transaction support (Hỗ trợ giao dịch)
+3. Card services (Dịch vụ thẻ)
+4. Loan information (Thông tin vay vốn)
+5. Complaint handling (Xử lý khiếu nại)
+6. Technical support (Hỗ trợ kỹ thuật)
+7. Account security (Bảo mật tài khoản)
+8. Fee information (Thông tin phí)
+9. Interest rate inquiry (Hỏi lãi suất)
+10. Banking hours (Giờ làm việc)
