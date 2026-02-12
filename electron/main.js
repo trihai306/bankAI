@@ -655,17 +655,28 @@ function getTtsGpuMode() {
 // Find system Node.js binary (not Electron's)
 function getSystemNode() {
   const candidates = isWindows ? ["node.exe", "node"] : ["node"];
+  const whichCmd = isWindows ? "where.exe" : "which";
   for (const cmd of candidates) {
     try {
-      const result = execFileSync("which", [cmd], { timeout: 3000 })
+      const result = execFileSync(whichCmd, [cmd], { timeout: 3000 })
         .toString()
-        .trim();
+        .trim()
+        .split(/\r?\n/)[0]; // 'where' can return multiple lines on Windows
       if (result) return result;
     } catch {
       // try next
     }
   }
   return "node"; // fallback
+}
+
+// Cross-platform spawn helper: .cmd/.bat files on Windows need cmd.exe /c
+function crossSpawn(command, args, options = {}) {
+  if (isWindows && /\.(cmd|bat)$/i.test(command)) {
+    const comSpec = process.env.ComSpec || "cmd.exe";
+    return spawn(comSpec, ["/c", command, ...args], options);
+  }
+  return spawn(command, args, options);
 }
 
 // Dispose current worker
@@ -985,21 +996,22 @@ ipcMain.handle("hardware:set-gpu-mode", async (_, mode) => {
 });
 
 ipcMain.handle("hardware:rebuild-llama", async (_, gpuFlag) => {
-  // gpuFlag: "false" | "cuda"
-  const npmCmd = process.platform === "win32" ? "npx.cmd" : "npx";
+  // gpuFlag: "false" | "cuda" — validate to prevent EINVAL on Windows
+  const safeGpuFlag = typeof gpuFlag === "string" && gpuFlag ? gpuFlag : "false";
+  const npmCmd = isWindows ? "npx.cmd" : "npx";
   const args = [
     "--no",
     "node-llama-cpp",
     "source",
-    "download",
+    "build",
     "--gpu",
-    gpuFlag,
+    safeGpuFlag,
   ];
 
-  console.log(`Rebuilding llama.cpp with GPU=${gpuFlag}...`);
+  console.log(`Rebuilding llama.cpp with GPU=${safeGpuFlag}...`);
 
   return new Promise((resolve) => {
-    const child = spawn(npmCmd, args, {
+    const child = crossSpawn(npmCmd, args, {
       cwd: path.join(__dirname, ".."),
       stdio: "pipe",
     });
@@ -1074,13 +1086,14 @@ ipcMain.handle("hardware:rebuild-whisper", async (_, gpuMode) => {
     }
 
     // Step 2: Configure CMake
-    let configCmd = "cmake -B build";
+    const cmakeArgs = ["-B", "build"];
     if (gpuMode === "cuda") {
-      configCmd += " -DGGML_CUDA=1";
+      cmakeArgs.push("-DGGML_CUDA=1");
     }
 
-    console.log("Running:", configCmd);
-    const configProc = spawn("bash", ["-c", configCmd], {
+    console.log("Running: cmake", cmakeArgs.join(" "));
+    const cmakeCmd = isWindows ? "cmake.exe" : "cmake";
+    const configProc = spawn(cmakeCmd, cmakeArgs, {
       cwd: whisperCppPath,
       stdio: "pipe",
     });
@@ -1107,7 +1120,7 @@ ipcMain.handle("hardware:rebuild-whisper", async (_, gpuMode) => {
       // Step 3: Build
       console.log("Building whisper.cpp...");
       const buildProc = spawn(
-        "cmake",
+        cmakeCmd,
         [
           "--build",
           "build",

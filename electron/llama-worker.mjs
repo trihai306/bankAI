@@ -61,8 +61,19 @@ async function init({ gpuMode = "auto", modelsDir, modelUri }) {
 
     // Load llama.cpp backend based on GPU preference
     if (gpuMode === "cuda") {
-      llamaInstance = await getLlama({ gpu: "cuda" });
-      console.log("[llama-worker] Backend: CUDA");
+      try {
+        llamaInstance = await getLlama({ gpu: "cuda" });
+        console.log("[llama-worker] Backend: CUDA");
+      } catch (cudaErr) {
+        console.warn("[llama-worker] CUDA init failed, falling back:", cudaErr.message);
+        try {
+          llamaInstance = await getLlama("lastBuild");
+          console.log("[llama-worker] Backend: lastBuild (CUDA fallback)");
+        } catch {
+          llamaInstance = await getLlama();
+          console.log("[llama-worker] Backend: auto (CUDA fallback)");
+        }
+      }
     } else if (gpuMode === "auto") {
       try {
         llamaInstance = await getLlama("lastBuild");
