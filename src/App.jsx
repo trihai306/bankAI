@@ -8,6 +8,7 @@ import TrainingData from './pages/TrainingData'
 import Chat from './pages/Chat'
 import History from './pages/History'
 import Settings from './pages/Settings'
+import HealthCheck from './pages/HealthCheck'
 
 function App() {
   return (
@@ -21,6 +22,7 @@ function App() {
         <Route path="/chat" element={<Chat />} />
         <Route path="/history" element={<History />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/health-check" element={<HealthCheck />} />
       </Routes>
     </Layout>
   )

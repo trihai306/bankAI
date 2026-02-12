@@ -14,10 +14,9 @@ if (nodeBin) {
     shelljs.config.execPath = nodeBin.toString();
 }
 
-import { spawn, execFile, execFileSync } from "child_process";
+import { spawn, fork, execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
-import { getLlama, LlamaChatSession, resolveModelFile } from "node-llama-cpp";
 import { initDB, dbAPI } from "./db.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -66,6 +65,35 @@ function getSystemPython() {
 
 const isDev = process.env.NODE_ENV === "development";
 
+// === Preload Status Tracking ===
+let preloadStatus = {
+    whisper: "idle", // idle | loading | ready | error
+    llm: "idle", // idle | loading | ready | error
+    whisperError: null,
+    llmError: null,
+    startedAt: null,
+    completedAt: null,
+};
+
+function getAutoPreloadSetting() {
+    try {
+        const settings = dbAPI.getSettings();
+        // Default to true if not set
+        return settings.autoPreload !== false;
+    } catch {
+        return true;
+    }
+}
+
+function broadcastPreloadStatus() {
+    const windows = BrowserWindow.getAllWindows();
+    for (const win of windows) {
+        if (!win.isDestroyed()) {
+            win.webContents.send("preload:status-update", preloadStatus);
+        }
+    }
+}
+
 function createWindow() {
     const mainWindow = new BrowserWindow({
         width: 1400,
@@ -96,7 +124,7 @@ function createWindow() {
     return mainWindow;
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     // Initialize Database
     try {
         initDB();
@@ -111,6 +139,12 @@ app.whenReady().then(() => {
             createWindow();
         }
     });
+
+    // Auto-preload models after window is ready
+    if (getAutoPreloadSetting()) {
+        // Small delay to let the window render first
+        setTimeout(() => preloadAllModels(), 2000);
+    }
 });
 
 app.on("window-all-closed", () => {
@@ -183,8 +217,14 @@ const REF_AUDIO_DIR = path.join(__dirname, "..", "python", "ref_audio");
 function runPython(args) {
     return new Promise((resolve, reject) => {
         const { python: venvPython } = getPythonPaths();
+        const ttsGpuMode = getTtsGpuMode();
+        const env = { ...process.env };
+        if (ttsGpuMode === "cpu") {
+            env.CUDA_VISIBLE_DEVICES = "";
+        }
         const python = spawn(venvPython, [PYTHON_SCRIPT, ...args], {
             cwd: PYTHON_DIR,
+            env,
         });
         let stdout = "";
         let stderr = "";
@@ -225,7 +265,9 @@ ipcMain.handle("tts:status", async () => {
             ready: result.ready,
             engine: "F5-TTS Vietnamese",
             model_exists: result.model_exists,
+            vocab_exists: result.vocab_exists,
             cli_available: result.cli_available,
+            model_dir: result.model_dir,
         };
     } catch (error) {
         return {
@@ -571,66 +613,251 @@ ipcMain.handle("tts:transcribe-audio", async (event, audioPath) => {
 });
 
 // Qwen3 - Local AI text processing via node-llama-cpp
+// Uses a separate Node.js child process to avoid SIGILL in Electron v40.
+// Electron v40 ships Node v24 which is incompatible with llama.cpp native
+// binaries compiled or distributed for the system Node.js (v22).
 
-// Singleton state for model loading
-let llamaInstance = null;
-let llamaModel = null;
-let llamaContext = null;
-let llamaSession = null;
-let modelLoadingPromise = null;
+let llamaWorker = null;
 let modelStatus = "not_loaded"; // not_loaded | loading | ready | error
+let modelLoadingPromise = null;
+let pendingPrompts = new Map(); // id -> { resolve, reject }
+let promptIdCounter = 0;
 
 const MODELS_DIR = path.join(__dirname, "..", "models");
 const MODEL_URI = "hf:Qwen/Qwen3-4B-GGUF:Q4_K_M";
+const LLAMA_WORKER_PATH = path.join(__dirname, "llama-worker.mjs");
 
 // Ensure models directory exists
 if (!fs.existsSync(MODELS_DIR)) {
     fs.mkdirSync(MODELS_DIR, { recursive: true });
 }
 
+// Read GPU preference from DB
+function getLlmGpuMode() {
+    try {
+        const settings = dbAPI.getSettings();
+        return settings.llmGpuMode || "cpu"; // cpu | cuda | auto
+    } catch {
+        return "cpu";
+    }
+}
+
+function getWhisperGpuMode() {
+    try {
+        const settings = dbAPI.getSettings();
+        return settings.whisperGpuMode || "cpu"; // cpu | cuda
+    } catch {
+        return "cpu";
+    }
+}
+
+function getTtsGpuMode() {
+    try {
+        const settings = dbAPI.getSettings();
+        return settings.ttsGpuMode || "cuda"; // cpu | cuda (default: cuda)
+    } catch {
+        return "cuda";
+    }
+}
+
+// Find system Node.js binary (not Electron's)
+function getSystemNode() {
+    const candidates = isWindows ? ["node.exe", "node"] : ["node"];
+    for (const cmd of candidates) {
+        try {
+            const result = execFileSync("which", [cmd], { timeout: 3000 })
+                .toString()
+                .trim();
+            if (result) return result;
+        } catch {
+            // try next
+        }
+    }
+    return "node"; // fallback
+}
+
+// Dispose current worker
+async function disposeQwenModel() {
+    try {
+        if (llamaWorker) {
+            llamaWorker.send({ type: "exit" });
+            // Give worker time to clean up, then force kill
+            await new Promise((resolve) => {
+                const timeout = setTimeout(() => {
+                    if (llamaWorker) {
+                        llamaWorker.kill();
+                    }
+                    resolve();
+                }, 5000);
+                llamaWorker.once("exit", () => {
+                    clearTimeout(timeout);
+                    resolve();
+                });
+            });
+            llamaWorker = null;
+        }
+        // Reject all pending prompts
+        for (const [id, { reject }] of pendingPrompts) {
+            reject(new Error("Model disposed"));
+        }
+        pendingPrompts.clear();
+        modelLoadingPromise = null;
+        modelStatus = "not_loaded";
+        console.log("Qwen model disposed");
+    } catch (e) {
+        console.error("Error disposing model:", e);
+    }
+}
+
+// Spawn and initialize the llama worker process
 async function initQwenModel() {
-    if (modelStatus === "ready" && llamaSession) return llamaSession;
+    if (modelStatus === "ready" && llamaWorker) return;
     if (modelLoadingPromise) return modelLoadingPromise;
 
-    modelLoadingPromise = (async () => {
+    modelLoadingPromise = new Promise((resolve, reject) => {
         try {
             modelStatus = "loading";
-            console.log("=== INITIALIZING QWEN3 4B via node-llama-cpp ===");
+            const gpuMode = getLlmGpuMode();
+            console.log(
+                `=== INITIALIZING QWEN3 4B via worker process (${gpuMode}) ===`,
+            );
 
-            // Initialize llama.cpp backend
-            llamaInstance = await getLlama();
-            console.log("llama.cpp backend initialized");
+            const nodeBin = getSystemNode();
+            console.log("Using system Node.js:", nodeBin);
 
-            // Resolve (download if needed) the model file
-            console.log("Resolving model file:", MODEL_URI);
-            const modelPath = await resolveModelFile(MODEL_URI, MODELS_DIR);
-            console.log("Model path resolved:", modelPath);
-
-            // Load the model
-            llamaModel = await llamaInstance.loadModel({ modelPath });
-            console.log("Model loaded successfully");
-
-            // Create context
-            llamaContext = await llamaModel.createContext();
-            console.log("Context created");
-
-            // Create chat session (auto-detects QwenChatWrapper)
-            llamaSession = new LlamaChatSession({
-                contextSequence: llamaContext.getSequence(),
+            // Fork the worker using the system Node.js (not Electron)
+            llamaWorker = fork(LLAMA_WORKER_PATH, [], {
+                execPath: nodeBin,
+                cwd: path.join(__dirname, ".."),
+                env: {
+                    ...process.env,
+                    PROJECT_ROOT: path.join(__dirname, ".."),
+                },
+                stdio: ["pipe", "pipe", "pipe", "ipc"],
             });
-            console.log("Chat session created");
 
-            modelStatus = "ready";
-            return llamaSession;
+            // Pipe worker stdout/stderr to main console
+            llamaWorker.stdout.on("data", (data) => {
+                process.stdout.write(data);
+            });
+            llamaWorker.stderr.on("data", (data) => {
+                process.stderr.write(data);
+            });
+
+            llamaWorker.on("message", (msg) => {
+                switch (msg.type) {
+                    case "status":
+                        modelStatus = msg.status;
+                        console.log(`[llama-worker] Status: ${msg.status}`);
+                        if (msg.status === "ready") {
+                            resolve();
+                        } else if (msg.status === "error") {
+                            modelLoadingPromise = null;
+                            reject(
+                                new Error(msg.error || "Worker init failed"),
+                            );
+                        }
+                        break;
+                    case "response": {
+                        const pending = pendingPrompts.get(msg.id);
+                        if (pending) {
+                            pendingPrompts.delete(msg.id);
+                            pending.resolve(msg.text);
+                        }
+                        break;
+                    }
+                    case "error": {
+                        const pendingErr = pendingPrompts.get(msg.id);
+                        if (pendingErr) {
+                            pendingPrompts.delete(msg.id);
+                            pendingErr.reject(new Error(msg.error));
+                        }
+                        break;
+                    }
+                    case "disposed":
+                        modelStatus = "not_loaded";
+                        break;
+                }
+            });
+
+            llamaWorker.on("exit", (code) => {
+                console.log(`[llama-worker] Process exited with code ${code}`);
+                llamaWorker = null;
+                const wasLoading = modelStatus === "loading";
+                modelStatus = "not_loaded";
+                // Always clear the loading promise so the next call
+                // spawns a fresh worker instead of re-using a stale one
+                modelLoadingPromise = null;
+                if (wasLoading) {
+                    reject(new Error(`Worker exited with code ${code}`));
+                }
+                // Reject all pending prompts
+                for (const [id, { reject: rej }] of pendingPrompts) {
+                    rej(new Error("Worker exited"));
+                }
+                pendingPrompts.clear();
+            });
+
+            llamaWorker.on("error", (err) => {
+                console.error("[llama-worker] Process error:", err);
+                modelLoadingPromise = null;
+                if (modelStatus === "loading") {
+                    modelStatus = "error";
+                    reject(err);
+                }
+            });
+
+            // Send init command to worker
+            llamaWorker.send({
+                type: "init",
+                gpuMode,
+                modelsDir: MODELS_DIR,
+                modelUri: MODEL_URI,
+            });
         } catch (error) {
-            console.error("Failed to initialize Qwen3 model:", error);
             modelStatus = "error";
             modelLoadingPromise = null;
-            throw error;
+            reject(error);
         }
-    })();
+    });
 
     return modelLoadingPromise;
+}
+
+// Send prompt to worker and wait for response
+function workerPrompt(text, temperature = 0.3, topP = 0.9) {
+    return new Promise((resolve, reject) => {
+        if (!llamaWorker || modelStatus !== "ready") {
+            reject(new Error("Model not ready"));
+            return;
+        }
+        const id = ++promptIdCounter;
+        pendingPrompts.set(id, { resolve, reject });
+
+        // Timeout after 2 minutes
+        const timeout = setTimeout(() => {
+            if (pendingPrompts.has(id)) {
+                pendingPrompts.delete(id);
+                reject(new Error("Prompt timed out"));
+            }
+        }, 120000);
+
+        // Wrap the resolve/reject to clear timeout
+        const originalResolve = resolve;
+        const originalReject = reject;
+        pendingPrompts.set(id, {
+            resolve: (val) => {
+                clearTimeout(timeout);
+                originalResolve(val);
+            },
+            reject: (err) => {
+                clearTimeout(timeout);
+                originalReject(err);
+            },
+        });
+
+        llamaWorker.send({ type: "prompt", id, text, temperature, topP });
+    });
 }
 
 // Model status IPC
@@ -638,8 +865,296 @@ ipcMain.handle("qwen:status", async () => {
     return {
         status: modelStatus,
         model: "Qwen3 4B",
-        engine: "node-llama-cpp",
+        engine: "node-llama-cpp (worker)",
+        gpuMode: getLlmGpuMode(),
     };
+});
+
+// === Hardware Acceleration IPC ===
+
+ipcMain.handle("hardware:get-info", async () => {
+    // Detect GPU and CUDA availability
+    let gpuName = null;
+    let cudaAvailable = false;
+    try {
+        const result = execFileSync(
+            "nvidia-smi",
+            ["--query-gpu=name,compute_cap", "--format=csv,noheader,nounits"],
+            { timeout: 5000 },
+        )
+            .toString()
+            .trim();
+        if (result) {
+            const [name, computeCap] = result.split(", ");
+            gpuName = name;
+            cudaAvailable = true;
+        }
+    } catch {
+        /* no nvidia-smi = no CUDA GPU */
+    }
+
+    // Check if local llama build exists
+    const localBuildDir = path.join(
+        __dirname,
+        "..",
+        "node_modules",
+        "node-llama-cpp",
+        "llama",
+        "localBuilds",
+    );
+    const hasLocalBuild = fs.existsSync(localBuildDir);
+
+    // Check whisper.cpp binary
+    const whisperBin = path.join(
+        __dirname,
+        "..",
+        "node_modules",
+        "nodejs-whisper",
+        "cpp",
+        "whisper.cpp",
+        "build",
+        "bin",
+        "whisper-cli",
+    );
+    const whisperReady = fs.existsSync(whisperBin);
+
+    // Detect whisper models
+    const whisperModelsDir = path.join(
+        __dirname,
+        "..",
+        "node_modules",
+        "nodejs-whisper",
+        "cpp",
+        "whisper.cpp",
+        "models",
+    );
+    let whisperModels = [];
+    try {
+        if (fs.existsSync(whisperModelsDir)) {
+            whisperModels = fs
+                .readdirSync(whisperModelsDir)
+                .filter((f) => f.startsWith("ggml-") && f.endsWith(".bin"))
+                .map((f) => f.replace("ggml-", "").replace(".bin", ""));
+        }
+    } catch {
+        /* ignore */
+    }
+
+    // Check if whisper was built with CUDA
+    let whisperBuiltWithCuda = false;
+    try {
+        const cmakeCache = path.join(
+            __dirname,
+            "..",
+            "node_modules",
+            "nodejs-whisper",
+            "cpp",
+            "whisper.cpp",
+            "build",
+            "CMakeCache.txt",
+        );
+        if (fs.existsSync(cmakeCache)) {
+            const content = fs.readFileSync(cmakeCache, "utf8");
+            whisperBuiltWithCuda = content.includes("GGML_CUDA:BOOL=ON");
+        }
+    } catch {
+        /* ignore */
+    }
+
+    return {
+        gpu: gpuName,
+        cudaAvailable,
+        whisper: {
+            ready: whisperReady,
+            engine: "whisper.cpp (nodejs-whisper)",
+            gpuMode: getWhisperGpuMode(),
+            builtWithCuda: whisperBuiltWithCuda,
+            models: whisperModels,
+        },
+        llm: {
+            engine: "node-llama-cpp (worker)",
+            gpuMode: getLlmGpuMode(),
+            hasLocalBuild,
+            modelStatus,
+        },
+        tts: {
+            gpuMode: getTtsGpuMode(),
+        },
+    };
+});
+
+ipcMain.handle("hardware:get-gpu-mode", async () => {
+    return { gpuMode: getLlmGpuMode() };
+});
+
+ipcMain.handle("hardware:set-gpu-mode", async (_, mode) => {
+    // mode: "cpu" | "cuda" | "auto"
+    dbAPI.saveSetting("llmGpuMode", mode);
+    console.log(`GPU mode set to: ${mode}`);
+    return { success: true, gpuMode: mode };
+});
+
+ipcMain.handle("hardware:rebuild-llama", async (_, gpuFlag) => {
+    // gpuFlag: "false" | "cuda"
+    const npmCmd = process.platform === "win32" ? "npx.cmd" : "npx";
+    const args = [
+        "--no",
+        "node-llama-cpp",
+        "source",
+        "download",
+        "--gpu",
+        gpuFlag,
+    ];
+
+    console.log(`Rebuilding llama.cpp with GPU=${gpuFlag}...`);
+
+    return new Promise((resolve) => {
+        const child = spawn(npmCmd, args, {
+            cwd: path.join(__dirname, ".."),
+            stdio: "pipe",
+        });
+
+        let output = "";
+        child.stdout.on("data", (d) => {
+            output += d.toString();
+        });
+        child.stderr.on("data", (d) => {
+            output += d.toString();
+        });
+
+        child.on("close", (code) => {
+            console.log(`Rebuild finished with code ${code}`);
+            resolve({
+                success: code === 0,
+                output: output.slice(-500),
+                gpuFlag,
+            });
+        });
+
+        child.on("error", (err) => {
+            resolve({ success: false, error: err.message, gpuFlag });
+        });
+    });
+});
+
+ipcMain.handle("hardware:reset-llm", async () => {
+    await disposeQwenModel();
+    return { success: true, status: "not_loaded" };
+});
+
+// Whisper GPU mode
+ipcMain.handle("hardware:set-whisper-gpu-mode", async (_, mode) => {
+    // mode: "cpu" | "cuda"
+    dbAPI.saveSetting("whisperGpuMode", mode);
+    console.log(`Whisper GPU mode set to: ${mode}`);
+    return { success: true, gpuMode: mode };
+});
+
+// TTS GPU mode
+ipcMain.handle("hardware:set-tts-gpu-mode", async (_, mode) => {
+    // mode: "cpu" | "cuda"
+    dbAPI.saveSetting("ttsGpuMode", mode);
+    console.log(`TTS GPU mode set to: ${mode}`);
+    return { success: true, gpuMode: mode };
+});
+
+ipcMain.handle("hardware:rebuild-whisper", async (_, gpuMode) => {
+    // gpuMode: "cpu" | "cuda"
+    const whisperCppPath = path.join(
+        __dirname,
+        "..",
+        "node_modules",
+        "nodejs-whisper",
+        "cpp",
+        "whisper.cpp",
+    );
+    const buildDir = path.join(whisperCppPath, "build");
+
+    console.log(`Rebuilding whisper.cpp with GPU=${gpuMode}...`);
+
+    return new Promise((resolve) => {
+        // Step 1: Remove existing build directory to force fresh CMake config
+        try {
+            if (fs.existsSync(buildDir)) {
+                fs.rmSync(buildDir, { recursive: true, force: true });
+                console.log("Removed existing build directory");
+            }
+        } catch (e) {
+            console.error("Failed to remove build dir:", e);
+        }
+
+        // Step 2: Configure CMake
+        let configCmd = "cmake -B build";
+        if (gpuMode === "cuda") {
+            configCmd += " -DGGML_CUDA=1";
+        }
+
+        console.log("Running:", configCmd);
+        const configProc = spawn("bash", ["-c", configCmd], {
+            cwd: whisperCppPath,
+            stdio: "pipe",
+        });
+
+        let output = "";
+        configProc.stdout.on("data", (d) => {
+            output += d.toString();
+        });
+        configProc.stderr.on("data", (d) => {
+            output += d.toString();
+        });
+
+        configProc.on("close", (configCode) => {
+            if (configCode !== 0) {
+                resolve({
+                    success: false,
+                    error: `CMake configure failed (code ${configCode})`,
+                    output: output.slice(-1000),
+                    gpuMode,
+                });
+                return;
+            }
+
+            // Step 3: Build
+            console.log("Building whisper.cpp...");
+            const buildProc = spawn(
+                "cmake",
+                [
+                    "--build",
+                    "build",
+                    "--config",
+                    "Release",
+                    "-j",
+                    String(Math.max(1, require("os").cpus().length - 1)),
+                ],
+                { cwd: whisperCppPath, stdio: "pipe" },
+            );
+
+            let buildOutput = "";
+            buildProc.stdout.on("data", (d) => {
+                buildOutput += d.toString();
+            });
+            buildProc.stderr.on("data", (d) => {
+                buildOutput += d.toString();
+            });
+
+            buildProc.on("close", (buildCode) => {
+                console.log(`Whisper rebuild finished with code ${buildCode}`);
+                resolve({
+                    success: buildCode === 0,
+                    output: (output + "\n" + buildOutput).slice(-1500),
+                    gpuMode,
+                });
+            });
+
+            buildProc.on("error", (err) => {
+                resolve({ success: false, error: err.message, gpuMode });
+            });
+        });
+
+        configProc.on("error", (err) => {
+            resolve({ success: false, error: err.message, gpuMode });
+        });
+    });
 });
 
 // Process text IPC
@@ -648,41 +1163,51 @@ ipcMain.handle("qwen:process-text", async (event, text, task = "correct") => {
     console.log("Text:", text);
     console.log("Task:", task);
 
-    try {
-        const session = await initQwenModel();
+    const MAX_RETRIES = 2;
 
-        const prompts = {
-            correct: `Bạn là trợ lý AI chuyên sửa lỗi chính tả và ngữ pháp tiếng Việt. Hãy sửa văn bản sau thành chính tả đúng, ngữ pháp chuẩn, giữ nguyên ý nghĩa. Chỉ trả về văn bản đã sửa, không giải thích:\n\n${text}`,
-            extract: `Hãy phân tích văn bản sau và trích xuất thông tin quan trọng dưới dạng JSON (intent, entities, sentiment):\n\n${text}`,
-            answer: `Dựa vào văn bản sau, hãy trả lời câu hỏi một cách ngắn gọn:\n\n${text}`,
-            custom: text,
-        };
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            await initQwenModel();
 
-        const prompt = prompts[task] || prompts.custom;
+            const prompts = {
+                correct: `Bạn là trợ lý AI chuyên sửa lỗi chính tả và ngữ pháp tiếng Việt. Hãy sửa văn bản sau thành chính tả đúng, ngữ pháp chuẩn, giữ nguyên ý nghĩa. Chỉ trả về văn bản đã sửa, không giải thích:\n\n${text}`,
+                extract: `Hãy phân tích văn bản sau và trích xuất thông tin quan trọng dưới dạng JSON (intent, entities, sentiment):\n\n${text}`,
+                answer: `Dựa vào văn bản sau, hãy trả lời câu hỏi một cách ngắn gọn:\n\n${text}`,
+                custom: text,
+            };
 
-        const response = await session.prompt(prompt, {
-            temperature: 0.3,
-            topP: 0.9,
-        });
+            const prompt = prompts[task] || prompts.custom;
+            const response = await workerPrompt(prompt);
 
-        console.log("Qwen3 response:", response);
+            console.log("Qwen3 response:", response);
 
-        return {
-            success: true,
-            text: response.trim(),
-            model: "qwen3:4b",
-            task: task,
-        };
-    } catch (error) {
-        console.error("Qwen processing error:", error);
-        return {
-            success: true,
-            text: text,
-            model: "none",
-            task: task,
-            warning: "Qwen3 not available - returned original text",
-        };
+            return {
+                success: true,
+                text: response,
+                model: "qwen3:4b",
+                task: task,
+            };
+        } catch (error) {
+            console.error(
+                `Qwen processing error (attempt ${attempt}/${MAX_RETRIES}):`,
+                error,
+            );
+            if (attempt < MAX_RETRIES) {
+                // Reset state and retry with a fresh worker
+                console.log("Resetting model for retry...");
+                await disposeQwenModel();
+            }
+        }
     }
+
+    // All retries exhausted — graceful fallback
+    return {
+        success: true,
+        text: text,
+        model: "none",
+        task: task,
+        warning: "Qwen3 not available - returned original text",
+    };
 });
 
 // Python Environment Management IPC
@@ -806,6 +1331,164 @@ ipcMain.handle("python:setup-env", async (event) => {
     } catch (error) {
         return { success: false, error: error.message };
     }
+});
+
+// === Auto-Preload Models ===
+
+const WHISPER_MODELS_DIR = path.join(
+    __dirname,
+    "..",
+    "node_modules",
+    "nodejs-whisper",
+    "cpp",
+    "whisper.cpp",
+    "models",
+);
+const WHISPER_MODEL_NAME = "medium";
+
+async function preloadWhisperModel() {
+    const modelFile = path.join(
+        WHISPER_MODELS_DIR,
+        `ggml-${WHISPER_MODEL_NAME}.bin`,
+    );
+
+    preloadStatus.whisper = "loading";
+    broadcastPreloadStatus();
+    console.log("[preload] Checking Whisper model...");
+
+    try {
+        // Check if model binary already exists
+        if (fs.existsSync(modelFile)) {
+            const stats = fs.statSync(modelFile);
+            console.log(
+                `[preload] Whisper model '${WHISPER_MODEL_NAME}' found (${(stats.size / 1024 / 1024).toFixed(0)}MB)`,
+            );
+            preloadStatus.whisper = "ready";
+            broadcastPreloadStatus();
+            return;
+        }
+
+        // Model not found — trigger download via nodewhisper warmup
+        console.log(
+            `[preload] Whisper model '${WHISPER_MODEL_NAME}' not found, downloading...`,
+        );
+
+        // Create a tiny silent WAV file for warmup
+        const warmupDir = path.join(os.tmpdir(), "bankai-warmup");
+        if (!fs.existsSync(warmupDir)) {
+            fs.mkdirSync(warmupDir, { recursive: true });
+        }
+        const warmupWav = path.join(warmupDir, "silence.wav");
+
+        // Generate minimal valid WAV (44 bytes header + 16000 samples of silence = ~1 second at 16kHz)
+        const sampleRate = 16000;
+        const numSamples = sampleRate; // 1 second
+        const dataSize = numSamples * 2; // 16-bit = 2 bytes per sample
+        const headerSize = 44;
+        const buffer = Buffer.alloc(headerSize + dataSize);
+
+        // RIFF header
+        buffer.write("RIFF", 0);
+        buffer.writeUInt32LE(36 + dataSize, 4);
+        buffer.write("WAVE", 8);
+        // fmt chunk
+        buffer.write("fmt ", 12);
+        buffer.writeUInt32LE(16, 16); // chunk size
+        buffer.writeUInt16LE(1, 20); // PCM format
+        buffer.writeUInt16LE(1, 22); // mono
+        buffer.writeUInt32LE(sampleRate, 24);
+        buffer.writeUInt32LE(sampleRate * 2, 28); // byte rate
+        buffer.writeUInt16LE(2, 32); // block align
+        buffer.writeUInt16LE(16, 34); // bits per sample
+        // data chunk
+        buffer.write("data", 36);
+        buffer.writeUInt32LE(dataSize, 40);
+        // Samples are all 0 (silence)
+
+        fs.writeFileSync(warmupWav, buffer);
+
+        // Run nodewhisper — this triggers model download
+        await nodewhisper(warmupWav, {
+            modelName: WHISPER_MODEL_NAME,
+            autoDownloadModelName: WHISPER_MODEL_NAME,
+            removeWavFileAfterTranscription: true,
+            whisperOptions: {
+                language: "vi",
+                outputInText: false,
+                outputInJson: false,
+            },
+        });
+
+        console.log("[preload] Whisper model downloaded and warmed up");
+        preloadStatus.whisper = "ready";
+        broadcastPreloadStatus();
+
+        // Cleanup warmup directory
+        try {
+            fs.rmSync(warmupDir, { recursive: true, force: true });
+        } catch {
+            /* ignore */
+        }
+    } catch (error) {
+        console.error("[preload] Whisper preload failed:", error.message);
+        preloadStatus.whisper = "error";
+        preloadStatus.whisperError = error.message;
+        broadcastPreloadStatus();
+    }
+}
+
+async function preloadLlmModel() {
+    preloadStatus.llm = "loading";
+    broadcastPreloadStatus();
+    console.log("[preload] Loading LLM model...");
+
+    try {
+        await initQwenModel();
+        preloadStatus.llm = "ready";
+        broadcastPreloadStatus();
+        console.log("[preload] LLM model ready");
+    } catch (error) {
+        console.error("[preload] LLM preload failed:", error.message);
+        preloadStatus.llm = "error";
+        preloadStatus.llmError = error.message;
+        broadcastPreloadStatus();
+    }
+}
+
+async function preloadAllModels() {
+    console.log("=== AUTO-PRELOAD MODELS ===");
+    preloadStatus.startedAt = Date.now();
+    broadcastPreloadStatus();
+
+    // Run both in parallel for faster startup
+    await Promise.allSettled([preloadWhisperModel(), preloadLlmModel()]);
+
+    preloadStatus.completedAt = Date.now();
+    const elapsed = (
+        (preloadStatus.completedAt - preloadStatus.startedAt) /
+        1000
+    ).toFixed(1);
+    console.log(`=== PRELOAD COMPLETE (${elapsed}s) ===`);
+    broadcastPreloadStatus();
+}
+
+// Preload IPC handlers
+ipcMain.handle("preload:get-status", () => preloadStatus);
+
+ipcMain.handle("preload:get-auto-preload", () => {
+    return { enabled: getAutoPreloadSetting() };
+});
+
+ipcMain.handle("preload:set-auto-preload", (_, enabled) => {
+    dbAPI.saveSetting("autoPreload", enabled);
+    console.log(`Auto-preload set to: ${enabled}`);
+    return { success: true, enabled };
+});
+
+ipcMain.handle("preload:trigger", async () => {
+    // Manual trigger from frontend
+    await preloadAllModels();
+    return preloadStatus;
 });
 
 // Cleanup old TTS files periodically

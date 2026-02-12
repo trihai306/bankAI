@@ -36,3 +36,5 @@ python/ref_audio/*.wav
 *.sw?
 docs/
 # .agent/
+
+src/f5_tts/

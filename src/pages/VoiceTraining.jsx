@@ -11,7 +11,8 @@ export default function VoiceTraining() {
     const [ttsText, setTtsText] = useState('xin chào mọi người hôm nay là thứ bảy')
     const [isGenerating, setIsGenerating] = useState(false)
     const [generatedAudio, setGeneratedAudio] = useState(null)
-    const [ttsStatus, setTtsStatus] = useState(null) // null, 'checking', 'ready', 'not_installed', 'installing'
+    const [ttsStatus, setTtsStatus] = useState(null) // null, 'checking', 'ready', 'not_installed', 'installing', 'partial'
+    const [ttsDetail, setTtsDetail] = useState(null) // { ready, model_exists, cli_available, engine, error }
     const [installLog, setInstallLog] = useState([])
     const [setupStatus, setSetupStatus] = useState({ checking: true, installed: false, error: null })
     const [isInstalling, setIsInstalling] = useState(false)
@@ -56,15 +57,29 @@ export default function VoiceTraining() {
 
     const checkStatus = async () => {
         setTtsStatus('checking')
+        setTtsDetail(null)
         try {
             if (window.electronAPI?.tts) {
-                const status = await window.electronAPI.tts.getStatus()
-                setTtsStatus(status)
+                const result = await window.electronAPI.tts.getStatus()
+                setTtsDetail(result)
+
+                if (result.ready) {
+                    setTtsStatus('ready')
+                } else if (result.error) {
+                    setTtsStatus('not_installed')
+                } else if (result.model_exists || result.cli_available) {
+                    // Partially installed
+                    setTtsStatus('partial')
+                } else {
+                    setTtsStatus('not_installed')
+                }
             } else {
                 setTtsStatus('demo')
             }
         } catch (e) {
+            console.error('TTS status check failed:', e)
             setTtsStatus('not_installed')
+            setTtsDetail({ error: e.message })
         }
     }
 
@@ -481,29 +496,50 @@ export default function VoiceTraining() {
     return (
         <div className="space-y-8">
             {/* Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold text-white tracking-tight">Voice Training</h1>
-                    <p className="text-slate-400 mt-1">Voice Cloning với F5-TTS Vietnamese</p>
+                    <h1 className="text-3xl font-bold tracking-tight text-white">Voice Training</h1>
+                    <p className="mt-1 text-slate-400">Voice Cloning với F5-TTS Vietnamese</p>
                 </div>
                 <div className="flex items-center gap-3">
                     <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm ${ttsStatus === 'ready'
                         ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                         : ttsStatus === 'checking' || ttsStatus === 'installing'
                             ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                            : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                            : ttsStatus === 'partial'
+                                ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20'
+                                : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
                         }`}>
                         {ttsStatus === 'ready' && <><Check className="w-4 h-4" /> F5-TTS Ready</>}
                         {ttsStatus === 'checking' && <><RefreshCw className="w-4 h-4 animate-spin" /> Đang kiểm tra...</>}
                         {ttsStatus === 'installing' && <><RefreshCw className="w-4 h-4 animate-spin" /> Đang cài đặt...</>}
                         {ttsStatus === 'not_installed' && <><AlertCircle className="w-4 h-4" /> Chưa cài đặt</>}
+                        {ttsStatus === 'partial' && <><AlertCircle className="w-4 h-4" /> Cài đặt chưa đủ</>}
                         {ttsStatus === 'demo' && <><Check className="w-4 h-4" /> Demo Mode</>}
                     </div>
+                    {ttsStatus === 'ready' && ttsDetail && (
+                        <div className="flex items-center gap-1.5">
+                            {ttsDetail.model_exists && (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] border border-emerald-500/20">Model ✓</span>
+                            )}
+                            {ttsDetail.cli_available && (
+                                <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 text-[10px] border border-cyan-500/20">CLI ✓</span>
+                            )}
+                        </div>
+                    )}
+                    <button
+                        onClick={checkStatus}
+                        disabled={ttsStatus === 'checking'}
+                        className="p-2 transition-all border rounded-xl bg-white/5 border-white/10 text-slate-400 hover:text-white disabled:opacity-50"
+                        title="Kiểm tra lại trạng thái"
+                    >
+                        <RefreshCw className={`w-3.5 h-3.5 ${ttsStatus === 'checking' ? 'animate-spin' : ''}`} />
+                    </button>
                     <a
                         href="https://huggingface.co/hynt/F5-TTS-Vietnamese-ViVoice"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white transition-all text-sm"
+                        className="flex items-center gap-2 px-4 py-2 text-sm transition-all border rounded-xl bg-white/5 border-white/10 text-slate-400 hover:text-white"
                     >
                         <ExternalLink className="w-4 h-4" />
                         Model
@@ -512,17 +548,54 @@ export default function VoiceTraining() {
             </div>
 
             {/* Install Card */}
-            {ttsStatus === 'not_installed' && (
-                <div className="rounded-2xl bg-gradient-to-r from-amber-500/10 to-orange-500/5 border border-amber-500/20 p-6">
+            {(ttsStatus === 'not_installed' || ttsStatus === 'partial') && (
+                <div className="p-6 border rounded-2xl bg-gradient-to-r from-amber-500/10 to-orange-500/5 border-amber-500/20">
                     <div className="flex items-start gap-4">
-                        <div className="w-12 h-12 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                        <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-amber-500/20 shrink-0">
                             <Server className="w-6 h-6 text-amber-400" />
                         </div>
                         <div className="flex-1">
-                            <h3 className="font-bold text-white mb-2">Cài đặt F5-TTS Vietnamese</h3>
-                            <p className="text-sm text-slate-400 mb-4">
+                            <h3 className="mb-2 font-bold text-white">Cài đặt F5-TTS Vietnamese</h3>
+                            <p className="mb-3 text-sm text-slate-400">
                                 Chạy lệnh sau hoặc nhấn "Cài đặt tự động":
                             </p>
+
+                            {/* Pre-flight check */}
+                            {ttsDetail && (
+                                <div className="grid grid-cols-3 gap-2 mb-4">
+                                    <div className={`flex items-center gap-2 p-2.5 rounded-xl text-xs font-medium ${
+                                        ttsDetail.cli_available
+                                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                            : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                    }`}>
+                                        {ttsDetail.cli_available ? <Check className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+                                        CLI
+                                    </div>
+                                    <div className={`flex items-center gap-2 p-2.5 rounded-xl text-xs font-medium ${
+                                        ttsDetail.model_exists
+                                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                            : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                    }`}>
+                                        {ttsDetail.model_exists ? <Check className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+                                        Model
+                                    </div>
+                                    <div className={`flex items-center gap-2 p-2.5 rounded-xl text-xs font-medium ${
+                                        ttsDetail.vocab_exists
+                                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                            : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                    }`}>
+                                        {ttsDetail.vocab_exists ? <Check className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+                                        Vocab
+                                    </div>
+                                </div>
+                            )}
+
+                            {ttsDetail?.error && (
+                                <div className="p-3 mb-4 border rounded-xl bg-rose-500/5 border-rose-500/10">
+                                    <p className="font-mono text-xs text-rose-400">{ttsDetail.error}</p>
+                                </div>
+                            )}
+
                             <div className="bg-[#0a0a12] rounded-xl p-4 font-mono text-xs text-slate-300 mb-4 overflow-x-auto">
                                 <code>cd python && pip install -e F5-TTS-Vietnamese</code>
                             </div>
@@ -530,7 +603,7 @@ export default function VoiceTraining() {
                             {installLog.length > 0 && (
                                 <div className="bg-[#0a0a12] rounded-xl p-4 mb-4 max-h-32 overflow-y-auto">
                                     {installLog.map((log, i) => (
-                                        <p key={i} className="text-xs font-mono text-slate-400">{log}</p>
+                                        <p key={i} className="font-mono text-xs text-slate-400">{log}</p>
                                     ))}
                                 </div>
                             )}
@@ -539,7 +612,7 @@ export default function VoiceTraining() {
                                 <button
                                     onClick={installF5TTS}
                                     disabled={ttsStatus === 'installing'}
-                                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 text-black font-medium hover:bg-amber-400 transition-colors disabled:opacity-50"
+                                    className="flex items-center gap-2 px-4 py-2 font-medium text-black transition-colors rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50"
                                 >
                                     {ttsStatus === 'installing' ? (
                                         <><RefreshCw className="w-4 h-4 animate-spin" /> Đang cài...</>
@@ -549,7 +622,7 @@ export default function VoiceTraining() {
                                 </button>
                                 <button
                                     onClick={checkStatus}
-                                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 text-slate-400 hover:text-white transition-colors"
+                                    className="flex items-center gap-2 px-4 py-2 transition-colors rounded-xl bg-white/5 text-slate-400 hover:text-white"
                                 >
                                     <RefreshCw className="w-4 h-4" /> Kiểm tra lại
                                 </button>
@@ -560,14 +633,14 @@ export default function VoiceTraining() {
             )}
 
             {/* Info Card */}
-            <div className="rounded-2xl bg-gradient-to-r from-violet-500/10 to-purple-500/5 border border-violet-500/20 p-6">
+            <div className="p-6 border rounded-2xl bg-gradient-to-r from-violet-500/10 to-purple-500/5 border-violet-500/20">
                 <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-violet-500/20 flex items-center justify-center shrink-0">
+                    <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-violet-500/20 shrink-0">
                         <Volume2 className="w-6 h-6 text-violet-400" />
                     </div>
                     <div className="flex-1">
-                        <h3 className="font-bold text-white mb-1">F5-TTS Vietnamese ViVoice</h3>
-                        <p className="text-sm text-slate-400 mb-3">
+                        <h3 className="mb-1 font-bold text-white">F5-TTS Vietnamese ViVoice</h3>
+                        <p className="mb-3 text-sm text-slate-400">
                             Voice Cloning AI - Nhân bản giọng nói từ 3-10 giây audio mẫu. Train trên 1000h data tiếng Việt.
                         </p>
                         <div className="flex flex-wrap gap-2">
@@ -579,12 +652,12 @@ export default function VoiceTraining() {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
                 {/* Main Panel */}
-                <div className="lg:col-span-2 space-y-6">
+                <div className="space-y-6 lg:col-span-2">
                     {/* Recording */}
                     <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-8">
-                        <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
+                        <h3 className="flex items-center gap-2 mb-6 text-lg font-bold text-white">
                             <Mic className="w-5 h-5 text-violet-400" />
                             Thu âm giọng mẫu (Reference Audio)
                         </h3>
@@ -611,36 +684,36 @@ export default function VoiceTraining() {
                                     )}
                                 </button>
                                 {isRecording && (
-                                    <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none">
-                                        <div className="px-3 py-1 rounded-full bg-rose-500/20 border border-rose-500/30">
-                                            <span className="text-xs text-rose-300 font-medium">Click để dừng</span>
+                                    <div className="absolute -translate-x-1/2 pointer-events-none -bottom-4 left-1/2 whitespace-nowrap">
+                                        <div className="px-3 py-1 border rounded-full bg-rose-500/20 border-rose-500/30">
+                                            <span className="text-xs font-medium text-rose-300">Click để dừng</span>
                                         </div>
                                     </div>
                                 )}
                                 {isRecording && (
-                                    <div className="absolute -inset-4 border-4 border-rose-500/30 rounded-full animate-ping pointer-events-none" />
+                                    <div className="absolute border-4 rounded-full pointer-events-none -inset-4 border-rose-500/30 animate-ping" />
                                 )}
                             </div>
 
-                            <p className="text-4xl font-bold text-white font-mono mb-4">
+                            <p className="mb-4 font-mono text-4xl font-bold text-white">
                                 {formatTime(recordingTime)}
                             </p>
 
-                            <p className="text-slate-300 text-sm mb-2">
+                            <p className="mb-2 text-sm text-slate-300">
                                 {isRecording
                                     ? 'Đang thu âm... Nhấn để dừng'
                                     : 'Nhấn để thu âm giọng mẫu (3-30 giây)'}
                             </p>
 
                             {isRecording && (
-                                <div className="mt-6 flex items-center justify-center gap-1 h-12">
+                                <div className="flex items-center justify-center h-12 gap-1 mt-6">
                                     {[...Array(24)].map((_, i) => {
                                         const baseHeight = 20 + Math.sin(i * 0.5) * 15
                                         const animDuration = 0.8 + (i % 5) * 0.1
                                         return (
                                             <div
                                                 key={i}
-                                                className="w-1 bg-violet-500 rounded-full animate-pulse"
+                                                className="w-1 rounded-full bg-violet-500 animate-pulse"
                                                 style={{
                                                     height: `${baseHeight}px`,
                                                     animationDuration: `${animDuration}s`,
@@ -656,21 +729,21 @@ export default function VoiceTraining() {
 
                     {/* Generate */}
                     <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-6">
-                        <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <h3 className="flex items-center gap-2 mb-4 text-lg font-bold text-white">
                             <Zap className="w-5 h-5 text-cyan-400" />
                             Tạo giọng nói (Voice Cloning)
                         </h3>
 
                         {voices.length === 0 ? (
-                            <div className="text-center py-8">
-                                <AlertCircle className="w-10 h-10 text-slate-500 mx-auto mb-3" />
+                            <div className="py-8 text-center">
+                                <AlertCircle className="w-10 h-10 mx-auto mb-3 text-slate-500" />
                                 <p className="text-slate-400">Thu âm giọng mẫu trước</p>
                             </div>
                         ) : (
                             <div className="space-y-4">
                                 {/* Select Reference */}
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-400 mb-2">1. Chọn giọng mẫu</label>
+                                    <label className="block mb-2 text-sm font-medium text-slate-400">1. Chọn giọng mẫu</label>
                                     <div className="flex flex-wrap gap-2">
                                         {voices.map(voice => (
                                             <button
@@ -690,7 +763,7 @@ export default function VoiceTraining() {
                                 {/* Transcript */}
                                 {selectedVoice && (
                                     <div>
-                                        <label className="block text-sm font-medium text-slate-400 mb-2">
+                                        <label className="block mb-2 text-sm font-medium text-slate-400">
                                             2. Transcript (nội dung audio mẫu đọc)
                                         </label>
                                         <div className="flex gap-2">
@@ -731,7 +804,7 @@ export default function VoiceTraining() {
                                                     setIsGenerating(false);
                                                 }}
                                                 disabled={isGenerating}
-                                                className="px-4 py-3 rounded-xl bg-violet-500/20 hover:bg-violet-500/30 text-violet-400 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                                className="flex items-center gap-2 px-4 py-3 text-sm font-medium rounded-xl bg-violet-500/20 hover:bg-violet-500/30 text-violet-400 disabled:opacity-50 disabled:cursor-not-allowed"
                                                 title="Auto-transcribe audio"
                                             >
                                                 {isGenerating ? (
@@ -747,7 +820,7 @@ export default function VoiceTraining() {
 
                                 {/* Text to Generate */}
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-400 mb-2">
+                                    <label className="block mb-2 text-sm font-medium text-slate-400">
                                         3. Văn bản cần tạo
                                     </label>
                                     <textarea
@@ -762,7 +835,7 @@ export default function VoiceTraining() {
                                 <button
                                     onClick={generateTTS}
                                     disabled={!ttsText.trim() || !selectedVoice || isGenerating}
-                                    className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="flex items-center justify-center w-full gap-2 py-3 font-medium text-white rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     {isGenerating ? (
                                         <><RefreshCw className="w-5 h-5 animate-spin" /> Đang tạo...</>
@@ -773,14 +846,14 @@ export default function VoiceTraining() {
 
                                 {/* Result */}
                                 {generatedAudio && (
-                                    <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                                    <div className="p-4 border rounded-xl bg-emerald-500/10 border-emerald-500/20">
                                         <div className="flex items-center justify-between">
                                             <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+                                                <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-emerald-500/20">
                                                     <Check className="w-5 h-5 text-emerald-400" />
                                                 </div>
                                                 <div>
-                                                    <p className="font-medium text-white text-sm">Thành công!</p>
+                                                    <p className="text-sm font-medium text-white">Thành công!</p>
                                                     <p className="text-xs text-slate-400 truncate max-w-[200px]">{generatedAudio.path}</p>
                                                 </div>
                                             </div>
@@ -801,8 +874,8 @@ export default function VoiceTraining() {
 
                     {/* Generated Voices List */}
                     <div className="rounded-2xl bg-white/[0.03] border border-white/10 overflow-hidden">
-                        <div className="px-6 py-5 border-b border-white/5 flex items-center justify-between">
-                            <h2 className="text-lg font-bold text-white flex items-center gap-3">
+                        <div className="flex items-center justify-between px-6 py-5 border-b border-white/5">
+                            <h2 className="flex items-center gap-3 text-lg font-bold text-white">
                                 <Zap className="w-5 h-5 text-emerald-400" />
                                 Giọng đã tạo
                             </h2>
@@ -811,8 +884,8 @@ export default function VoiceTraining() {
 
                         {generatedVoices.length === 0 ? (
                             <div className="p-8 text-center">
-                                <AlertCircle className="w-10 h-10 text-slate-500 mx-auto mb-3" />
-                                <p className="text-slate-500 text-sm">Chưa có giọng nào được tạo</p>
+                                <AlertCircle className="w-10 h-10 mx-auto mb-3 text-slate-500" />
+                                <p className="text-sm text-slate-500">Chưa có giọng nào được tạo</p>
                             </div>
                         ) : (
                             <div className="divide-y divide-white/5 max-h-[400px] overflow-y-auto">
@@ -824,7 +897,7 @@ export default function VoiceTraining() {
                                         <div className="flex items-center gap-3">
                                             <button
                                                 onClick={() => playVoice(voice)}
-                                                className="shrink-0 w-9 h-9 rounded-lg bg-white/5 flex items-center justify-center hover:bg-emerald-500/20"
+                                                className="flex items-center justify-center rounded-lg shrink-0 w-9 h-9 bg-white/5 hover:bg-emerald-500/20"
                                             >
                                                 {isPlaying === voice.id ? (
                                                     <Pause className="w-4 h-4 text-emerald-400" />
@@ -834,7 +907,7 @@ export default function VoiceTraining() {
                                             </button>
 
                                             <div className="flex-1 min-w-0">
-                                                <p className="font-medium text-white text-sm truncate">{voice.name}</p>
+                                                <p className="text-sm font-medium text-white truncate">{voice.name}</p>
                                                 <p className="text-xs text-slate-500 mt-0.5">
                                                     {new Date(voice.timestamp).toLocaleString('vi-VN', {
                                                         day: '2-digit',
@@ -862,8 +935,8 @@ export default function VoiceTraining() {
 
                     {/* Reference Voices List */}
                     <div className="rounded-2xl bg-white/[0.03] border border-white/10 overflow-hidden">
-                        <div className="px-6 py-5 border-b border-white/5 flex items-center justify-between">
-                            <h2 className="text-lg font-bold text-white flex items-center gap-3">
+                        <div className="flex items-center justify-between px-6 py-5 border-b border-white/5">
+                            <h2 className="flex items-center gap-3 text-lg font-bold text-white">
                                 <FileAudio className="w-5 h-5 text-cyan-400" />
                                 Giọng mẫu
                             </h2>
@@ -872,9 +945,9 @@ export default function VoiceTraining() {
 
                         {voices.length === 0 ? (
                             <div className="p-8 text-center">
-                                <Mic className="w-10 h-10 text-slate-500 mx-auto mb-3" />
-                                <p className="text-slate-500 text-sm">Chưa có giọng mẫu</p>
-                                <p className="text-slate-600 text-xs">Thu âm 3-10 giây</p>
+                                <Mic className="w-10 h-10 mx-auto mb-3 text-slate-500" />
+                                <p className="text-sm text-slate-500">Chưa có giọng mẫu</p>
+                                <p className="text-xs text-slate-600">Thu âm 3-10 giây</p>
                             </div>
                         ) : (
                             <div className="divide-y divide-white/5 max-h-[500px] overflow-y-auto">
@@ -888,7 +961,7 @@ export default function VoiceTraining() {
                                             <div className="flex items-center gap-3">
                                                 <button
                                                     onClick={(e) => { e.stopPropagation(); playVoice(voice) }}
-                                                    className="w-9 h-9 rounded-lg bg-white/5 flex items-center justify-center hover:bg-violet-500/20"
+                                                    className="flex items-center justify-center rounded-lg w-9 h-9 bg-white/5 hover:bg-violet-500/20"
                                                 >
                                                     {isPlaying === voice.id ? (
                                                         <Pause className="w-4 h-4 text-violet-400" />

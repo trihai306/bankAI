@@ -95,4 +95,35 @@ contextBridge.exposeInMainWorld("electronAPI", {
         removeSetupProgress: () =>
             ipcRenderer.removeAllListeners("python:setup-progress"),
     },
+
+    // Hardware Acceleration
+    hardware: {
+        getInfo: () => ipcRenderer.invoke("hardware:get-info"),
+        getGpuMode: () => ipcRenderer.invoke("hardware:get-gpu-mode"),
+        setGpuMode: (mode) => ipcRenderer.invoke("hardware:set-gpu-mode", mode),
+        rebuildLlama: (gpuFlag) =>
+            ipcRenderer.invoke("hardware:rebuild-llama", gpuFlag),
+        resetLlm: () => ipcRenderer.invoke("hardware:reset-llm"),
+        setWhisperGpuMode: (mode) =>
+            ipcRenderer.invoke("hardware:set-whisper-gpu-mode", mode),
+        setTtsGpuMode: (mode) =>
+            ipcRenderer.invoke("hardware:set-tts-gpu-mode", mode),
+        rebuildWhisper: (gpuMode) =>
+            ipcRenderer.invoke("hardware:rebuild-whisper", gpuMode),
+    },
+
+    // Preload
+    preload: {
+        getStatus: () => ipcRenderer.invoke("preload:get-status"),
+        getAutoPreload: () => ipcRenderer.invoke("preload:get-auto-preload"),
+        setAutoPreload: (enabled) =>
+            ipcRenderer.invoke("preload:set-auto-preload", enabled),
+        trigger: () => ipcRenderer.invoke("preload:trigger"),
+        onStatusUpdate: (callback) =>
+            ipcRenderer.on("preload:status-update", (_, data) =>
+                callback(data),
+            ),
+        removeStatusUpdate: () =>
+            ipcRenderer.removeAllListeners("preload:status-update"),
+    },
 });

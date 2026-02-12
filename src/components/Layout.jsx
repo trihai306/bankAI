@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Phone, Mic, Brain, History, Settings, Bot, Menu, X, Zap, Database, MessageSquare } from 'lucide-react'
+import { LayoutDashboard, Phone, Mic, Brain, History, Settings, Bot, Menu, X, Zap, Database, MessageSquare, Activity } from 'lucide-react'
 import { useState } from 'react'
 
 const navigation = [
@@ -10,6 +10,7 @@ const navigation = [
     { name: 'Training Data', href: '/training-data', icon: Database },
     { name: 'AI Chat', href: '/chat', icon: MessageSquare },
     { name: 'History', href: '/history', icon: History },
+    { name: 'Health Check', href: '/health-check', icon: Activity },
     { name: 'Settings', href: '/settings', icon: Settings },
 ]
 
