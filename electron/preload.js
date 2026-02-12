@@ -84,6 +84,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     generate: (config) => ipcRenderer.invoke("tts:generate", config),
   },
 
+  // Voice Chat (Realtime Voice Conversation)
+  voiceChat: {
+    start: (config) => ipcRenderer.invoke("voice-chat:start", config),
+    stop: () => ipcRenderer.invoke("voice-chat:stop"),
+    process: (audioData, filename) =>
+      ipcRenderer.invoke("voice-chat:process", audioData, filename),
+    status: () => ipcRenderer.invoke("voice-chat:status"),
+  },
+
   // Qwen3 - Local AI (node-llama-cpp)
   qwen: {
     processText: (text, task) =>
@@ -94,12 +103,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Python Environment Management
   python: {
     checkEnv: () => ipcRenderer.invoke("python:check-env"),
-    setupEnv: () => ipcRenderer.invoke("python:setup-env"),
     getPlatform: () => ipcRenderer.invoke("python:get-platform"),
-    onSetupProgress: (callback) =>
-      ipcRenderer.on("python:setup-progress", (_, data) => callback(data)),
-    removeSetupProgress: () =>
-      ipcRenderer.removeAllListeners("python:setup-progress"),
   },
 
   // Hardware Acceleration
@@ -129,17 +133,5 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.on("preload:status-update", (_, data) => callback(data)),
     removeStatusUpdate: () =>
       ipcRenderer.removeAllListeners("preload:status-update"),
-  },
-
-  // Windows Build Tools
-  buildtools: {
-    check: () => ipcRenderer.invoke("buildtools:check"),
-    install: () => ipcRenderer.invoke("buildtools:install"),
-    onInstallProgress: (callback) =>
-      ipcRenderer.on("buildtools:install-progress", (_, data) =>
-        callback(data),
-      ),
-    removeInstallProgress: () =>
-      ipcRenderer.removeAllListeners("buildtools:install-progress"),
   },
 });

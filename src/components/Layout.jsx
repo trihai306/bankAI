@@ -1,15 +1,15 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Phone, Mic, Brain, History, Settings, Bot, Menu, X, Zap, Database, MessageSquare, Activity, AudioLines } from 'lucide-react'
+import { LayoutDashboard, Phone, Mic, Brain, History, Settings, Bot, Menu, X, Zap, Database, MessageSquare, Activity, AudioLines, Mic2 } from 'lucide-react'
 import { useState } from 'react'
 
 const navigation = [
     { name: 'Dashboard', href: '/', icon: LayoutDashboard },
     { name: 'Call Center', href: '/calls', icon: Phone },
-    { name: 'Voice Training', href: '/voice-training', icon: Mic },
     { name: 'Voice Create', href: '/voice-create', icon: AudioLines },
     { name: 'Models', href: '/models', icon: Brain },
     { name: 'Training Data', href: '/training-data', icon: Database },
     { name: 'AI Chat', href: '/chat', icon: MessageSquare },
+    { name: 'Voice Chat', href: '/voice-chat', icon: Mic2 },
     { name: 'History', href: '/history', icon: History },
     { name: 'Health Check', href: '/health-check', icon: Activity },
     { name: 'Settings', href: '/settings', icon: Settings },

@@ -199,12 +199,9 @@ export default function HealthCheck() {
     const [ttsGpuMode, setTtsGpuMode] = useState('cuda')
 
     // Action states
-    const [installingPython, setInstallingPython] = useState(false)
     const [rebuildingLlama, setRebuildingLlama] = useState(false)
     const [rebuildingWhisper, setRebuildingWhisper] = useState(false)
     const [resettingLlm, setResettingLlm] = useState(false)
-    const [setupLogs, setSetupLogs] = useState([])
-    const [setupProgress, setSetupProgress] = useState(null)
 
     // Preload status
     const [preloadStatus, setPreloadStatus] = useState(null)
@@ -351,34 +348,7 @@ export default function HealthCheck() {
         }
     }
 
-    const handleSetupPython = async () => {
-        if (!window.electronAPI?.python) return
-        setInstallingPython(true)
-        setSetupLogs([])
-        setSetupProgress(null)
 
-        window.electronAPI.python.onSetupProgress((data) => {
-            if (data.event === 'progress') {
-                setSetupProgress(data)
-            } else if (data.event === 'step') {
-                setSetupLogs(prev => [...prev, { type: 'info', message: data.message }])
-            } else if (data.event === 'error') {
-                setSetupLogs(prev => [...prev, { type: 'error', message: data.message }])
-            } else if (data.event === 'complete') {
-                setSetupLogs(prev => [...prev, { type: data.success ? 'success' : 'error', message: data.message }])
-            }
-        })
-
-        try {
-            await window.electronAPI.python.setupEnv()
-            await runFullScan()
-        } catch (e) {
-            setSetupLogs(prev => [...prev, { type: 'error', message: e.message }])
-        } finally {
-            setInstallingPython(false)
-            window.electronAPI.python.removeSetupProgress?.()
-        }
-    }
 
     // === Derived states ===
 
@@ -757,8 +727,7 @@ export default function HealthCheck() {
                     mode={ttsGpuMode}
                     modeOptions={TTS_MODES}
                     onModeChange={handleTtsModeChange}
-                    onInstall={f5Status === 'not_installed' ? handleSetupPython : undefined}
-                    installing={installingPython}
+
                     details={[
                         { ok: pythonEnv?.venv_exists, label: 'Python Venv' },
                         { ok: pythonEnv?.torch_installed, label: 'PyTorch' },
@@ -798,42 +767,6 @@ export default function HealthCheck() {
                             </p>
                         )}
                     </div>
-
-                    {/* Install progress */}
-                    {installingPython && setupProgress && (
-                        <div>
-                            <div className="flex items-center justify-between mb-1">
-                                <span className="text-[10px] text-slate-500">
-                                    Bước {setupProgress.current}/{setupProgress.total}
-                                </span>
-                                <span className="text-[10px] font-medium text-cyan-400">{setupProgress.percent}%</span>
-                            </div>
-                            <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-gradient-to-r from-pink-500 to-rose-500 rounded-full transition-all duration-500"
-                                    style={{ width: `${setupProgress.percent}%` }}
-                                />
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Setup logs */}
-                    {setupLogs.length > 0 && (
-                        <div className="max-h-32 overflow-y-auto rounded-xl bg-[#0a0a12] border border-white/5 p-3 font-mono text-[10px] space-y-0.5">
-                            {setupLogs.map((log, i) => (
-                                <div key={i} className={`flex items-start gap-1.5 ${
-                                    log.type === 'error' ? 'text-red-400' :
-                                    log.type === 'success' ? 'text-emerald-400' :
-                                    'text-slate-400'
-                                }`}>
-                                    <span className="shrink-0">
-                                        {log.type === 'error' ? '✗' : log.type === 'success' ? '✓' : '→'}
-                                    </span>
-                                    <span>{log.message}</span>
-                                </div>
-                            ))}
-                        </div>
-                    )}
                 </EngineCard>
             </div>
         </div>

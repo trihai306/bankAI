@@ -18,6 +18,7 @@ import { spawn, fork, execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import { initDB, dbAPI } from "./db.js";
+import { VoiceConversationEngine } from "./voice-engine.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1421,6 +1422,64 @@ ipcMain.handle("qwen:process-text", async (event, text, task = "correct") => {
   };
 });
 
+// === Voice Chat (Realtime Voice Conversation) ===
+let voiceEngine = null;
+
+function getVoiceEngine() {
+  if (!voiceEngine) {
+    voiceEngine = new VoiceConversationEngine({
+      nodewhisper,
+      workerPrompt,
+      initQwenModel,
+      runPython,
+      dbAPI,
+    });
+  }
+  return voiceEngine;
+}
+
+ipcMain.handle("voice-chat:start", async (_, config = {}) => {
+  try {
+    const engine = getVoiceEngine();
+    const result = engine.start(config);
+    return result;
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("voice-chat:stop", async () => {
+  try {
+    const engine = getVoiceEngine();
+    return engine.stop();
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("voice-chat:status", async () => {
+  const engine = getVoiceEngine();
+  return engine.getStatus();
+});
+
+ipcMain.handle("voice-chat:process", async (event, audioData, filename) => {
+  try {
+    const engine = getVoiceEngine();
+    const result = await engine.processAudioChunk(audioData, filename);
+
+    // If TTS generated audio, read it and send back as buffer
+    if (result.success && result.audioPath && fs.existsSync(result.audioPath)) {
+      const audioBuffer = fs.readFileSync(result.audioPath);
+      result.audioData = Array.from(audioBuffer);
+      result.audioMimeType = "audio/wav";
+    }
+
+    return result;
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 // Python Environment Management IPC
 const SETUP_SCRIPT = path.join(PYTHON_DIR, "setup_env.py");
 
@@ -1487,57 +1546,6 @@ ipcMain.handle("python:check-env", async () => {
     });
   } catch (error) {
     return { ready: false, error: error.message };
-  }
-});
-
-ipcMain.handle("python:setup-env", async (event) => {
-  try {
-    const sysPython = getSystemPython();
-    if (!sysPython) {
-      return {
-        success: false,
-        error: "Python 3.10+ not found on system",
-      };
-    }
-
-    const win = BrowserWindow.fromWebContents(event.sender);
-
-    return new Promise((resolve) => {
-      const proc = spawn(sysPython, [SETUP_SCRIPT, "setup"], {
-        cwd: PYTHON_DIR,
-      });
-      let lastEvent = null;
-
-      proc.stdout.on("data", (data) => {
-        const lines = data.toString().trim().split("\n");
-        for (const line of lines) {
-          try {
-            const parsed = JSON.parse(line);
-            lastEvent = parsed;
-            if (win && !win.isDestroyed()) {
-              win.webContents.send("python:setup-progress", parsed);
-            }
-          } catch {
-            // Non-JSON output, ignore
-          }
-        }
-      });
-
-      proc.stderr.on("data", (data) => {
-        console.error("setup_env.py stderr:", data.toString());
-      });
-
-      proc.on("close", (code) => {
-        const success = code === 0 && lastEvent?.success !== false;
-        resolve({ success, lastEvent });
-      });
-
-      proc.on("error", (err) => {
-        resolve({ success: false, error: err.message });
-      });
-    });
-  } catch (error) {
-    return { success: false, error: error.message };
   }
 });
 
@@ -1718,174 +1726,3 @@ setInterval(
   },
   30 * 60 * 1000,
 );
-
-// === Windows Build Tools Detection & Auto-Install ===
-
-function checkWindowsBuildTools() {
-  if (process.platform !== "win32") {
-    return { platform: process.platform, skip: true, allReady: true };
-  }
-
-  const result = {
-    platform: "win32",
-    vsBuildTools: { installed: false, version: null, path: null },
-    cmake: { installed: false, version: null },
-    git: { installed: false, version: null },
-    allReady: false,
-  };
-
-  // Check VS Build Tools via vswhere.exe
-  const vsWherePath = path.join(
-    process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)",
-    "Microsoft Visual Studio",
-    "Installer",
-    "vswhere.exe",
-  );
-
-  if (fs.existsSync(vsWherePath)) {
-    try {
-      const installPath = execFileSync(
-        vsWherePath,
-        [
-          "-latest",
-          "-products",
-          "*",
-          "-requires",
-          "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-          "-property",
-          "installationPath",
-        ],
-        { timeout: 10000 },
-      )
-        .toString()
-        .trim();
-
-      if (installPath) {
-        result.vsBuildTools.installed = true;
-        result.vsBuildTools.path = installPath;
-        try {
-          result.vsBuildTools.version = execFileSync(
-            vsWherePath,
-            ["-latest", "-products", "*", "-property", "installationVersion"],
-            { timeout: 5000 },
-          )
-            .toString()
-            .trim();
-        } catch {
-          /* ignore version detection failure */
-        }
-      }
-    } catch {
-      /* vswhere failed */
-    }
-  }
-
-  // Check CMake
-  try {
-    const cmakeOut = execFileSync("cmake", ["--version"], {
-      timeout: 5000,
-    }).toString();
-    const match = cmakeOut.match(/cmake version (.+)/);
-    if (match) {
-      result.cmake.installed = true;
-      result.cmake.version = match[1].trim();
-    }
-  } catch {
-    /* cmake not found */
-  }
-
-  // Check Git
-  try {
-    const gitOut = execFileSync("git", ["--version"], {
-      timeout: 5000,
-    }).toString();
-    const match = gitOut.match(/git version (.+)/);
-    if (match) {
-      result.git.installed = true;
-      result.git.version = match[1].trim();
-    }
-  } catch {
-    /* git not found */
-  }
-
-  result.allReady =
-    result.vsBuildTools.installed &&
-    result.cmake.installed &&
-    result.git.installed;
-
-  return result;
-}
-
-ipcMain.handle("buildtools:check", async () => {
-  return checkWindowsBuildTools();
-});
-
-ipcMain.handle("buildtools:install", async (event) => {
-  if (process.platform !== "win32") {
-    return { success: false, error: "This feature is only for Windows" };
-  }
-
-  const scriptPath = path.join(__dirname, "..", "scripts", "windows-setup.ps1");
-  if (!fs.existsSync(scriptPath)) {
-    return {
-      success: false,
-      error: "Setup script not found: scripts/windows-setup.ps1",
-    };
-  }
-
-  const win = BrowserWindow.fromWebContents(event.sender);
-
-  return new Promise((resolve) => {
-    const proc = spawn(
-      "powershell.exe",
-      [
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        scriptPath,
-        "-Force",
-        "-JsonOutput",
-      ],
-      {
-        cwd: path.join(__dirname, ".."),
-        stdio: "pipe",
-      },
-    );
-
-    let output = "";
-
-    proc.stdout.on("data", (data) => {
-      const text = data.toString();
-      output += text;
-
-      // Forward JSON events to renderer
-      const lines = text.trim().split("\n");
-      for (const line of lines) {
-        try {
-          const parsed = JSON.parse(line);
-          if (win && !win.isDestroyed()) {
-            win.webContents.send("buildtools:install-progress", parsed);
-          }
-        } catch {
-          /* non-JSON line */
-        }
-      }
-    });
-
-    proc.stderr.on("data", (data) => {
-      output += data.toString();
-    });
-
-    proc.on("close", (code) => {
-      resolve({
-        success: code === 0,
-        output: output.slice(-2000),
-        exitCode: code,
-      });
-    });
-
-    proc.on("error", (err) => {
-      resolve({ success: false, error: err.message });
-    });
-  });
-});

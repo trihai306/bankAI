@@ -34,7 +34,7 @@ python/ref_audio/*.wav
 *.njsproj
 *.sln
 *.sw?
-docs/
+# docs/
 # .agent/
 
 src/f5_tts/
