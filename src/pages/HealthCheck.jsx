@@ -16,10 +16,7 @@ const WHISPER_MODES = [
     { value: 'cuda', icon: Zap, label: 'CUDA', desc: 'NVIDIA GPU', color: 'emerald' },
 ]
 
-const TTS_MODES = [
-    { value: 'cuda', icon: Zap, label: 'GPU', desc: 'Nhanh hơn (CUDA)', color: 'emerald' },
-    { value: 'cpu', icon: Cpu, label: 'CPU', desc: 'Ổn định, ít VRAM', color: 'cyan' },
-]
+// TTS only supports GPU (CUDA) mode - no user selection needed
 
 function StatusDot({ status }) {
     const colors = {
@@ -55,19 +52,16 @@ function ModeSelector({ currentMode, onModeChange, disabled, modes }) {
                     key={value}
                     onClick={() => onModeChange(value)}
                     disabled={disabled}
-                    className={`p-3 rounded-xl border text-left transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed ${
-                        currentMode === value
-                            ? `bg-${color}-500/10 border-${color}-500/30 ring-1 ring-${color}-500/20`
-                            : 'bg-white/[0.02] border-white/5 hover:border-white/10'
-                    }`}
+                    className={`p-3 rounded-xl border text-left transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed ${currentMode === value
+                        ? `bg-${color}-500/10 border-${color}-500/30 ring-1 ring-${color}-500/20`
+                        : 'bg-white/[0.02] border-white/5 hover:border-white/10'
+                        }`}
                 >
                     <div className="flex items-center gap-2 mb-0.5">
-                        <Icon className={`w-3.5 h-3.5 ${
-                            currentMode === value ? `text-${color}-400` : 'text-slate-500'
-                        }`} />
-                        <span className={`text-xs font-semibold ${
-                            currentMode === value ? `text-${color}-400` : 'text-slate-400'
-                        }`}>{label}</span>
+                        <Icon className={`w-3.5 h-3.5 ${currentMode === value ? `text-${color}-400` : 'text-slate-500'
+                            }`} />
+                        <span className={`text-xs font-semibold ${currentMode === value ? `text-${color}-400` : 'text-slate-400'
+                            }`}>{label}</span>
                     </div>
                     <span className="text-[10px] text-slate-600">{desc}</span>
                 </button>
@@ -196,7 +190,8 @@ export default function HealthCheck() {
     // GPU modes per engine
     const [llmGpuMode, setLlmGpuMode] = useState('cpu')
     const [whisperGpuMode, setWhisperGpuMode] = useState('cpu')
-    const [ttsGpuMode, setTtsGpuMode] = useState('cuda')
+    // TTS is GPU-only, no state needed
+    const ttsGpuMode = 'cuda'
 
     // Action states
     const [rebuildingLlama, setRebuildingLlama] = useState(false)
@@ -223,7 +218,7 @@ export default function HealthCheck() {
                 setHwInfo(hw.value)
                 setLlmGpuMode(hw.value?.llm?.gpuMode || 'cpu')
                 setWhisperGpuMode(hw.value?.whisper?.gpuMode || 'cpu')
-                setTtsGpuMode(hw.value?.tts?.gpuMode || 'cuda')
+                // TTS is GPU-only, no need to read setting
             }
             if (py.status === 'fulfilled') setPythonEnv(py.value)
             if (qwen.status === 'fulfilled') setQwenStatus(qwen.value)
@@ -295,14 +290,7 @@ export default function HealthCheck() {
         }
     }
 
-    const handleTtsModeChange = async (mode) => {
-        setTtsGpuMode(mode)
-        try {
-            await window.electronAPI?.hardware?.setTtsGpuMode(mode)
-        } catch (e) {
-            console.error('Failed to set TTS GPU mode:', e)
-        }
-    }
+    // TTS is GPU-only, no mode change handler needed
 
     const handleRebuildWhisper = async () => {
         setRebuildingWhisper(true)
@@ -414,18 +402,16 @@ export default function HealthCheck() {
             </div>
 
             {/* Overall Status Bar */}
-            <div className={`p-4 rounded-2xl border flex items-center justify-between ${
-                overallHealth.color === 'emerald' ? 'bg-emerald-500/5 border-emerald-500/20' :
+            <div className={`p-4 rounded-2xl border flex items-center justify-between ${overallHealth.color === 'emerald' ? 'bg-emerald-500/5 border-emerald-500/20' :
                 overallHealth.color === 'amber' ? 'bg-amber-500/5 border-amber-500/20' :
-                'bg-red-500/5 border-red-500/20'
-            }`}>
+                    'bg-red-500/5 border-red-500/20'
+                }`}>
                 <div className="flex items-center gap-3">
                     <StatusDot status={overallHealth.status === 'healthy' ? 'ready' : overallHealth.status === 'partial' ? 'loading' : 'error'} />
-                    <span className={`font-semibold text-sm ${
-                        overallHealth.color === 'emerald' ? 'text-emerald-400' :
+                    <span className={`font-semibold text-sm ${overallHealth.color === 'emerald' ? 'text-emerald-400' :
                         overallHealth.color === 'amber' ? 'text-amber-400' :
-                        'text-red-400'
-                    }`}>{overallHealth.label}</span>
+                            'text-red-400'
+                        }`}>{overallHealth.label}</span>
                 </div>
                 {hwInfo?.gpu && (
                     <span className="text-xs text-slate-500 flex items-center gap-1.5">
@@ -487,18 +473,16 @@ export default function HealthCheck() {
 
             {/* Preload Status Banner */}
             {preloadStatus && (preloadStatus.whisper !== 'idle' || preloadStatus.llm !== 'idle') && (
-                <div className={`p-4 rounded-2xl border ${
-                    preloadStatus.whisper === 'ready' && preloadStatus.llm === 'ready'
-                        ? 'bg-emerald-500/5 border-emerald-500/20'
-                        : preloadStatus.whisper === 'error' || preloadStatus.llm === 'error'
-                            ? 'bg-red-500/5 border-red-500/20'
-                            : 'bg-cyan-500/5 border-cyan-500/20'
-                }`}>
+                <div className={`p-4 rounded-2xl border ${preloadStatus.whisper === 'ready' && preloadStatus.llm === 'ready'
+                    ? 'bg-emerald-500/5 border-emerald-500/20'
+                    : preloadStatus.whisper === 'error' || preloadStatus.llm === 'error'
+                        ? 'bg-red-500/5 border-red-500/20'
+                        : 'bg-cyan-500/5 border-cyan-500/20'
+                    }`}>
                     <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-2">
-                            <Rocket className={`w-4 h-4 ${
-                                preloadStatus.completedAt ? 'text-emerald-400' : 'text-cyan-400 animate-pulse'
-                            }`} />
+                            <Rocket className={`w-4 h-4 ${preloadStatus.completedAt ? 'text-emerald-400' : 'text-cyan-400 animate-pulse'
+                                }`} />
                             <span className="text-sm font-semibold text-white">
                                 {preloadStatus.completedAt ? 'Models đã sẵn sàng' : 'Đang nạp models...'}
                             </span>
@@ -515,49 +499,43 @@ export default function HealthCheck() {
                         )}
                     </div>
                     <div className="grid grid-cols-2 gap-3">
-                        <div className={`flex items-center gap-2 p-2 rounded-xl ${
-                            preloadStatus.whisper === 'ready' ? 'bg-emerald-500/10' :
+                        <div className={`flex items-center gap-2 p-2 rounded-xl ${preloadStatus.whisper === 'ready' ? 'bg-emerald-500/10' :
                             preloadStatus.whisper === 'error' ? 'bg-red-500/10' :
-                            preloadStatus.whisper === 'loading' ? 'bg-cyan-500/10' : 'bg-white/[0.02]'
-                        }`}>
-                            <Mic className={`w-3.5 h-3.5 ${
-                                preloadStatus.whisper === 'ready' ? 'text-emerald-400' :
+                                preloadStatus.whisper === 'loading' ? 'bg-cyan-500/10' : 'bg-white/[0.02]'
+                            }`}>
+                            <Mic className={`w-3.5 h-3.5 ${preloadStatus.whisper === 'ready' ? 'text-emerald-400' :
                                 preloadStatus.whisper === 'error' ? 'text-red-400' :
-                                preloadStatus.whisper === 'loading' ? 'text-cyan-400 animate-pulse' : 'text-slate-500'
-                            }`} />
+                                    preloadStatus.whisper === 'loading' ? 'text-cyan-400 animate-pulse' : 'text-slate-500'
+                                }`} />
                             <div>
                                 <span className="text-xs font-medium text-slate-300">Whisper</span>
-                                <span className={`block text-[10px] ${
-                                    preloadStatus.whisper === 'ready' ? 'text-emerald-400' :
+                                <span className={`block text-[10px] ${preloadStatus.whisper === 'ready' ? 'text-emerald-400' :
                                     preloadStatus.whisper === 'error' ? 'text-red-400' :
-                                    preloadStatus.whisper === 'loading' ? 'text-cyan-400' : 'text-slate-500'
-                                }`}>
+                                        preloadStatus.whisper === 'loading' ? 'text-cyan-400' : 'text-slate-500'
+                                    }`}>
                                     {preloadStatus.whisper === 'ready' ? 'Sẵn sàng' :
-                                     preloadStatus.whisper === 'loading' ? 'Đang tải...' :
-                                     preloadStatus.whisper === 'error' ? 'Lỗi' : 'Chờ'}
+                                        preloadStatus.whisper === 'loading' ? 'Đang tải...' :
+                                            preloadStatus.whisper === 'error' ? 'Lỗi' : 'Chờ'}
                                 </span>
                             </div>
                         </div>
-                        <div className={`flex items-center gap-2 p-2 rounded-xl ${
-                            preloadStatus.llm === 'ready' ? 'bg-emerald-500/10' :
+                        <div className={`flex items-center gap-2 p-2 rounded-xl ${preloadStatus.llm === 'ready' ? 'bg-emerald-500/10' :
                             preloadStatus.llm === 'error' ? 'bg-red-500/10' :
-                            preloadStatus.llm === 'loading' ? 'bg-cyan-500/10' : 'bg-white/[0.02]'
-                        }`}>
-                            <Brain className={`w-3.5 h-3.5 ${
-                                preloadStatus.llm === 'ready' ? 'text-emerald-400' :
+                                preloadStatus.llm === 'loading' ? 'bg-cyan-500/10' : 'bg-white/[0.02]'
+                            }`}>
+                            <Brain className={`w-3.5 h-3.5 ${preloadStatus.llm === 'ready' ? 'text-emerald-400' :
                                 preloadStatus.llm === 'error' ? 'text-red-400' :
-                                preloadStatus.llm === 'loading' ? 'text-cyan-400 animate-pulse' : 'text-slate-500'
-                            }`} />
+                                    preloadStatus.llm === 'loading' ? 'text-cyan-400 animate-pulse' : 'text-slate-500'
+                                }`} />
                             <div>
                                 <span className="text-xs font-medium text-slate-300">LLM (Qwen3)</span>
-                                <span className={`block text-[10px] ${
-                                    preloadStatus.llm === 'ready' ? 'text-emerald-400' :
+                                <span className={`block text-[10px] ${preloadStatus.llm === 'ready' ? 'text-emerald-400' :
                                     preloadStatus.llm === 'error' ? 'text-red-400' :
-                                    preloadStatus.llm === 'loading' ? 'text-cyan-400' : 'text-slate-500'
-                                }`}>
+                                        preloadStatus.llm === 'loading' ? 'text-cyan-400' : 'text-slate-500'
+                                    }`}>
                                     {preloadStatus.llm === 'ready' ? 'Sẵn sàng' :
-                                     preloadStatus.llm === 'loading' ? 'Đang tải...' :
-                                     preloadStatus.llm === 'error' ? 'Lỗi' : 'Chờ'}
+                                        preloadStatus.llm === 'loading' ? 'Đang tải...' :
+                                            preloadStatus.llm === 'error' ? 'Lỗi' : 'Chờ'}
                                 </span>
                             </div>
                         </div>
@@ -613,8 +591,43 @@ export default function HealthCheck() {
                     <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
                         <p className="text-xs text-slate-500 mb-0.5">Engine</p>
                         <p className="text-sm font-medium text-slate-300">
-                            {hwInfo?.whisper?.engine || 'whisper.cpp (nodejs-whisper)'}
+                            {hwInfo?.whisper?.engine || 'whisper.cpp (whisper-server)'}
                         </p>
+                    </div>
+
+                    {/* Whisper Server Status */}
+                    <div className={`p-3 rounded-xl border ${hwInfo?.whisper?.serverStatus?.status === 'ready'
+                            ? 'bg-emerald-500/10 border-emerald-500/20'
+                            : hwInfo?.whisper?.serverStatus?.status === 'starting'
+                                ? 'bg-amber-500/10 border-amber-500/20'
+                                : 'bg-white/[0.02] border-white/5'
+                        }`}>
+                        <p className="text-xs text-slate-500 mb-0.5">Server Status</p>
+                        <div className="flex items-center gap-2">
+                            <StatusDot status={
+                                hwInfo?.whisper?.serverStatus?.status === 'ready' ? 'ready' :
+                                    hwInfo?.whisper?.serverStatus?.status === 'starting' ? 'loading' :
+                                        hwInfo?.whisper?.serverStatus?.status === 'error' ? 'error' : 'not_installed'
+                            } />
+                            <span className={`text-sm font-medium ${hwInfo?.whisper?.serverStatus?.status === 'ready' ? 'text-emerald-400' :
+                                    hwInfo?.whisper?.serverStatus?.status === 'starting' ? 'text-amber-400' :
+                                        'text-slate-500'
+                                }`}>
+                                {hwInfo?.whisper?.serverStatus?.status === 'ready' ? 'Model loaded in memory' :
+                                    hwInfo?.whisper?.serverStatus?.status === 'starting' ? 'Đang tải model...' :
+                                        hwInfo?.whisper?.serverStatus?.status === 'error' ? 'Lỗi' : 'Chưa khởi động'}
+                            </span>
+                            {hwInfo?.whisper?.serverStatus?.pid && (
+                                <span className="text-[10px] text-slate-600">
+                                    PID: {hwInfo.whisper.serverStatus.pid}
+                                </span>
+                            )}
+                        </div>
+                        {hwInfo?.whisper?.serverStatus?.status === 'ready' && (
+                            <p className="text-[10px] text-slate-600 mt-1">
+                                ✅ Model được giữ trong RAM — transcription nhanh, không cần load lại
+                            </p>
+                        )}
                     </div>
 
                     {/* Current build mode indicator */}
@@ -637,10 +650,10 @@ export default function HealthCheck() {
                                 (whisperGpuMode === 'cuda' && !hwInfo?.whisper?.builtWithCuda) ||
                                 (whisperGpuMode === 'cpu' && hwInfo?.whisper?.builtWithCuda)
                             ) && (
-                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                                    Cần rebuild
-                                </span>
-                            )}
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                        Cần rebuild
+                                    </span>
+                                )}
                         </div>
                     </div>
 
@@ -717,16 +730,13 @@ export default function HealthCheck() {
                     </p>
                 </EngineCard>
 
-                {/* F5-TTS */}
+                {/* F5-TTS (GPU Only) */}
                 <EngineCard
                     title="F5-TTS"
                     icon={Music}
                     gradient="from-pink-500 to-rose-600"
                     status={f5Status}
                     model={ttsStatus?.model_exists ? 'F5-TTS Vietnamese' : null}
-                    mode={ttsGpuMode}
-                    modeOptions={TTS_MODES}
-                    onModeChange={handleTtsModeChange}
 
                     details={[
                         { ok: pythonEnv?.venv_exists, label: 'Python Venv' },
@@ -743,27 +753,44 @@ export default function HealthCheck() {
                             {ttsStatus?.engine || 'F5-TTS Vietnamese'}
                         </p>
                     </div>
+
+                    {/* GPU-Only Mode Indicator */}
+                    <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="text-xs text-slate-500 mb-0.5">Chế độ chạy</p>
+                                <div className="flex items-center gap-2">
+                                    <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                                    <span className="text-sm font-semibold text-emerald-400">GPU Only (CUDA)</span>
+                                </div>
+                            </div>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                Bắt buộc
+                            </span>
+                        </div>
+                    </div>
+
                     <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
                         <p className="text-xs text-slate-500 mb-0.5">PyTorch Backend</p>
                         <p className="text-sm font-medium text-slate-300">
                             {pythonEnv?.torch_installed ? (
-                                ttsGpuMode === 'cuda' && hwInfo?.cudaAvailable ? (
+                                hwInfo?.cudaAvailable ? (
                                     <span className="text-emerald-400 font-semibold">GPU (PyTorch CUDA)</span>
                                 ) : (
-                                    <span className="text-cyan-400 font-semibold">CPU (PyTorch)</span>
+                                    <span className="text-amber-400 font-semibold">⚠️ CUDA không khả dụng</span>
                                 )
                             ) : (
                                 <span className="text-slate-500">N/A</span>
                             )}
                         </p>
-                        {ttsGpuMode === 'cuda' && !hwInfo?.cudaAvailable && (
-                            <p className="text-[10px] text-amber-400 mt-0.5">
-                                ⚠️ GPU được chọn nhưng không phát hiện CUDA
+                        {!hwInfo?.cudaAvailable && (
+                            <p className="text-[10px] text-red-400 mt-0.5">
+                                ❌ F5-TTS yêu cầu NVIDIA GPU với CUDA. Vui lòng kiểm tra driver GPU.
                             </p>
                         )}
-                        {ttsGpuMode === 'cuda' && hwInfo?.cudaAvailable && (
+                        {hwInfo?.cudaAvailable && (
                             <p className="text-[10px] text-slate-600 mt-0.5">
-                                Cần đủ VRAM cho model (~5GB)
+                                ✅ CUDA sẵn sàng • Cần đủ VRAM cho model (~5GB)
                             </p>
                         )}
                     </div>

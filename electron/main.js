@@ -5,6 +5,7 @@ import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
 const { nodewhisper } = require("nodejs-whisper");
+import { whisperServer } from "./whisper-server.js";
 
 // Fix shelljs execPath for Electron: shelljs skips process.execPath in Electron,
 // but nodejs-whisper needs it for ffmpeg conversion via shelljs.exec()
@@ -31,7 +32,7 @@ function getPythonPaths() {
   const venvDir = path.join(PYTHON_DIR, "venv");
   if (isWindows) {
     return {
-      python: path.join(venvDir, "Scripts", "python.exe"),
+      python: path.join(venvDir, "python.exe"),
       pip: path.join(venvDir, "Scripts", "pip.exe"),
       cli: path.join(venvDir, "Scripts", "f5-tts_infer-cli.exe"),
     };
@@ -154,6 +155,12 @@ app.on("window-all-closed", () => {
   }
 });
 
+// Cleanup whisper server on quit
+app.on("before-quit", () => {
+  console.log("[App] Shutting down whisper server...");
+  whisperServer.stop();
+});
+
 // IPC Handlers
 ipcMain.handle("app:version", () => app.getVersion());
 
@@ -214,7 +221,7 @@ ipcMain.handle(
                 if (code === 0) {
                   try {
                     fs.unlinkSync(refPath);
-                  } catch {}
+                  } catch { }
                   resolve();
                 } else {
                   reject(new Error(`ffmpeg exited with code ${code}`));
@@ -291,7 +298,7 @@ ipcMain.handle("voice:update", async (_, id, data) => {
               if (code === 0) {
                 try {
                   fs.unlinkSync(refPath);
-                } catch {}
+                } catch { }
                 resolve();
               } else {
                 reject(new Error(`ffmpeg exited with code ${code}`));
@@ -313,7 +320,7 @@ ipcMain.handle("voice:update", async (_, id, data) => {
       ) {
         try {
           fs.unlinkSync(existingVoice.audio_path);
-        } catch {}
+        } catch { }
       }
     }
 
@@ -425,11 +432,11 @@ const REF_AUDIO_DIR = path.join(__dirname, "..", "python", "ref_audio");
 function runPython(args) {
   return new Promise((resolve, reject) => {
     const { python: venvPython } = getPythonPaths();
-    const ttsGpuMode = getTtsGpuMode();
     const env = { ...process.env };
-    if (ttsGpuMode === "cpu") {
-      env.CUDA_VISIBLE_DEVICES = "";
-    }
+    // F5-TTS requires GPU (CUDA) - ensure CUDA is always visible
+    // Do NOT set CUDA_VISIBLE_DEVICES="" as CPU mode is no longer supported
+    env.PYTHONUTF8 = "1";
+    env.PYTHONIOENCODING = "utf-8";
     const python = spawn(venvPython, [PYTHON_SCRIPT, ...args], {
       cwd: PYTHON_DIR,
       env,
@@ -768,9 +775,9 @@ ipcMain.handle("tts:read-audio", async (event, filepath) => {
   }
 });
 
-// Transcribe audio to text using whisper.cpp (via nodejs-whisper)
+// Transcribe audio to text using persistent whisper-server
 ipcMain.handle("tts:transcribe-audio", async (event, audioPath) => {
-  console.log("=== TRANSCRIBE AUDIO (whisper.cpp) ===");
+  console.log("=== TRANSCRIBE AUDIO (whisper-server) ===");
   console.log("Audio path:", audioPath);
 
   try {
@@ -778,26 +785,20 @@ ipcMain.handle("tts:transcribe-audio", async (event, audioPath) => {
       return { success: false, error: "Audio file not found" };
     }
 
-    const transcript = await nodewhisper(audioPath, {
-      modelName: "medium",
-      autoDownloadModelName: "medium",
-      removeWavFileAfterTranscription: false,
-      whisperOptions: {
-        language: "vi",
-        outputInText: false,
-        outputInJson: false,
-        splitOnWord: true,
-      },
-    });
+    // Ensure whisper server is running
+    if (!whisperServer.isReady()) {
+      console.log("[Transcribe] Whisper server not ready, starting...");
+      const startResult = await whisperServer.start({
+        useGpu: getWhisperGpuMode() === "cuda",
+      });
+      if (!startResult.success) {
+        return { success: false, error: `Whisper server failed to start: ${startResult.error}` };
+      }
+    }
 
-    // nodewhisper returns raw transcript text with timestamps
-    // Parse out just the text content (remove [HH:MM:SS.mmm --> HH:MM:SS.mmm] timestamps)
-    const text = transcript
-      .replace(
-        /\[\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}\]\s*/g,
-        "",
-      )
-      .trim();
+    const text = await whisperServer.transcribe(audioPath, {
+      language: "vi",
+    });
 
     console.log("Transcription result:", text);
 
@@ -852,12 +853,8 @@ function getWhisperGpuMode() {
 }
 
 function getTtsGpuMode() {
-  try {
-    const settings = dbAPI.getSettings();
-    return settings.ttsGpuMode || "cuda"; // cpu | cuda (default: cuda)
-  } catch {
-    return "cuda";
-  }
+  // F5-TTS only supports GPU (CUDA) - CPU mode is no longer available
+  return "cuda";
 }
 
 // Find system Node.js binary (not Electron's)
@@ -1175,10 +1172,11 @@ ipcMain.handle("hardware:get-info", async () => {
     cudaAvailable,
     whisper: {
       ready: whisperReady,
-      engine: "whisper.cpp (nodejs-whisper)",
+      engine: "whisper.cpp (whisper-server)",
       gpuMode: getWhisperGpuMode(),
       builtWithCuda: whisperBuiltWithCuda,
       models: whisperModels,
+      serverStatus: whisperServer.getStatus(),
     },
     llm: {
       engine: "node-llama-cpp (worker)",
@@ -1261,12 +1259,15 @@ ipcMain.handle("hardware:set-whisper-gpu-mode", async (_, mode) => {
   return { success: true, gpuMode: mode };
 });
 
-// TTS GPU mode
+// TTS GPU mode - GPU (CUDA) only, CPU mode is not supported
 ipcMain.handle("hardware:set-tts-gpu-mode", async (_, mode) => {
-  // mode: "cpu" | "cuda"
-  dbAPI.saveSetting("ttsGpuMode", mode);
-  console.log(`TTS GPU mode set to: ${mode}`);
-  return { success: true, gpuMode: mode };
+  if (mode !== "cuda") {
+    console.warn(`TTS only supports CUDA mode. Ignoring request for: ${mode}`);
+    return { success: false, error: "F5-TTS only supports GPU (CUDA) mode", gpuMode: "cuda" };
+  }
+  dbAPI.saveSetting("ttsGpuMode", "cuda");
+  console.log(`TTS GPU mode confirmed: cuda`);
+  return { success: true, gpuMode: "cuda" };
 });
 
 ipcMain.handle("hardware:rebuild-whisper", async (_, gpuMode) => {
@@ -1427,8 +1428,20 @@ let voiceEngine = null;
 
 function getVoiceEngine() {
   if (!voiceEngine) {
+    // Create a transcribe function that uses the persistent whisper server
+    const whisperTranscribe = async (wavPath, options) => {
+      if (!whisperServer.isReady()) {
+        await whisperServer.start({
+          useGpu: getWhisperGpuMode() === "cuda",
+        });
+      }
+      return whisperServer.transcribe(wavPath, {
+        language: options?.whisperOptions?.language || "vi",
+      });
+    };
+
     voiceEngine = new VoiceConversationEngine({
-      nodewhisper,
+      nodewhisper: whisperTranscribe,
       workerPrompt,
       initQwenModel,
       runPython,
@@ -1557,7 +1570,7 @@ ipcMain.handle("voice-chat:pick-audio", async () => {
     if (wavPath !== filePath) {
       try {
         fs.unlinkSync(wavPath);
-      } catch {}
+      } catch { }
     }
 
     return result;
@@ -1644,7 +1657,7 @@ ipcMain.handle("voice-chat:process-ref-file", async (_, filename) => {
     if (wavPath !== filePath) {
       try {
         fs.unlinkSync(wavPath);
-      } catch {}
+      } catch { }
     }
 
     return result;
@@ -1746,78 +1759,81 @@ async function preloadWhisperModel() {
   console.log("[preload] Checking Whisper model...");
 
   try {
-    // Check if model binary already exists
-    if (fs.existsSync(modelFile)) {
+    // Check if model binary exists — if not, download via nodewhisper warmup
+    if (!fs.existsSync(modelFile)) {
+      console.log(
+        `[preload] Whisper model '${WHISPER_MODEL_NAME}' not found, downloading...`,
+      );
+
+      // Create a tiny silent WAV file for warmup/download
+      const warmupDir = path.join(os.tmpdir(), "bankai-warmup");
+      if (!fs.existsSync(warmupDir)) {
+        fs.mkdirSync(warmupDir, { recursive: true });
+      }
+      const warmupWav = path.join(warmupDir, "silence.wav");
+
+      const sampleRate = 16000;
+      const numSamples = sampleRate;
+      const dataSize = numSamples * 2;
+      const headerSize = 44;
+      const buffer = Buffer.alloc(headerSize + dataSize);
+
+      buffer.write("RIFF", 0);
+      buffer.writeUInt32LE(36 + dataSize, 4);
+      buffer.write("WAVE", 8);
+      buffer.write("fmt ", 12);
+      buffer.writeUInt32LE(16, 16);
+      buffer.writeUInt16LE(1, 20);
+      buffer.writeUInt16LE(1, 22);
+      buffer.writeUInt32LE(sampleRate, 24);
+      buffer.writeUInt32LE(sampleRate * 2, 28);
+      buffer.writeUInt16LE(2, 32);
+      buffer.writeUInt16LE(16, 34);
+      buffer.write("data", 36);
+      buffer.writeUInt32LE(dataSize, 40);
+
+      fs.writeFileSync(warmupWav, buffer);
+
+      // Run nodewhisper once to trigger model download
+      await nodewhisper(warmupWav, {
+        modelName: WHISPER_MODEL_NAME,
+        autoDownloadModelName: WHISPER_MODEL_NAME,
+        removeWavFileAfterTranscription: true,
+        whisperOptions: {
+          language: "vi",
+          outputInText: false,
+          outputInJson: false,
+        },
+      });
+
+      try {
+        fs.rmSync(warmupDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+
+      console.log("[preload] Whisper model downloaded");
+    } else {
       const stats = fs.statSync(modelFile);
       console.log(
         `[preload] Whisper model '${WHISPER_MODEL_NAME}' found (${(stats.size / 1024 / 1024).toFixed(0)}MB)`,
       );
-      preloadStatus.whisper = "ready";
-      broadcastPreloadStatus();
-      return;
     }
 
-    // Model not found — trigger download via nodewhisper warmup
-    console.log(
-      `[preload] Whisper model '${WHISPER_MODEL_NAME}' not found, downloading...`,
-    );
-
-    // Create a tiny silent WAV file for warmup
-    const warmupDir = path.join(os.tmpdir(), "bankai-warmup");
-    if (!fs.existsSync(warmupDir)) {
-      fs.mkdirSync(warmupDir, { recursive: true });
-    }
-    const warmupWav = path.join(warmupDir, "silence.wav");
-
-    // Generate minimal valid WAV (44 bytes header + 16000 samples of silence = ~1 second at 16kHz)
-    const sampleRate = 16000;
-    const numSamples = sampleRate; // 1 second
-    const dataSize = numSamples * 2; // 16-bit = 2 bytes per sample
-    const headerSize = 44;
-    const buffer = Buffer.alloc(headerSize + dataSize);
-
-    // RIFF header
-    buffer.write("RIFF", 0);
-    buffer.writeUInt32LE(36 + dataSize, 4);
-    buffer.write("WAVE", 8);
-    // fmt chunk
-    buffer.write("fmt ", 12);
-    buffer.writeUInt32LE(16, 16); // chunk size
-    buffer.writeUInt16LE(1, 20); // PCM format
-    buffer.writeUInt16LE(1, 22); // mono
-    buffer.writeUInt32LE(sampleRate, 24);
-    buffer.writeUInt32LE(sampleRate * 2, 28); // byte rate
-    buffer.writeUInt16LE(2, 32); // block align
-    buffer.writeUInt16LE(16, 34); // bits per sample
-    // data chunk
-    buffer.write("data", 36);
-    buffer.writeUInt32LE(dataSize, 40);
-    // Samples are all 0 (silence)
-
-    fs.writeFileSync(warmupWav, buffer);
-
-    // Run nodewhisper — this triggers model download
-    await nodewhisper(warmupWav, {
-      modelName: WHISPER_MODEL_NAME,
-      autoDownloadModelName: WHISPER_MODEL_NAME,
-      removeWavFileAfterTranscription: true,
-      whisperOptions: {
-        language: "vi",
-        outputInText: false,
-        outputInJson: false,
-      },
+    // Now start the persistent whisper-server (model loads once, stays in memory)
+    console.log("[preload] Starting persistent whisper-server...");
+    const serverResult = await whisperServer.start({
+      useGpu: getWhisperGpuMode() === "cuda",
     });
 
-    console.log("[preload] Whisper model downloaded and warmed up");
-    preloadStatus.whisper = "ready";
-    broadcastPreloadStatus();
-
-    // Cleanup warmup directory
-    try {
-      fs.rmSync(warmupDir, { recursive: true, force: true });
-    } catch {
-      /* ignore */
+    if (serverResult.success) {
+      preloadStatus.whisper = "ready";
+      console.log("[preload] Whisper server ready — model loaded in memory");
+    } else {
+      throw new Error(serverResult.error || "Failed to start whisper server");
     }
+
+    broadcastPreloadStatus();
   } catch (error) {
     console.error("[preload] Whisper preload failed:", error.message);
     preloadStatus.whisper = "error";

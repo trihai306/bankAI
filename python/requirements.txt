@@ -1,7 +1,8 @@
 # Core ML
-# NOTE: torch<2.6.0 required for CUDA sm_61 (GTX 1060) support
-torch>=2.4.0,<2.6.0
-torchaudio>=2.4.0,<2.6.0
+# torch 2.5.1 is the last version where torchaudio supports soundfile backend natively.
+# torchaudio 2.9+ requires torchcodec which has DLL issues on Windows.
+torch==2.5.1
+torchaudio==2.5.1
 
 # F5-TTS dependencies (installed separately via pip install -e)
 # These are common deps that F5-TTS needs

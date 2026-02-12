@@ -85,21 +85,16 @@ export class VoiceConversationEngine {
       const buffer = Buffer.from(audioData);
       fs.writeFileSync(wavPath, buffer);
 
-      // Step 2: Whisper STT
+      // Step 2: Whisper STT (via persistent whisper-server)
       console.log("[VoiceEngine] Step 2: Whisper STT...");
       const transcript = await this.nodewhisper(wavPath, {
-        modelName: "medium",
-        autoDownloadModelName: "medium",
-        removeWavFileAfterTranscription: false,
         whisperOptions: {
           language: "vi",
-          outputInText: false,
-          outputInJson: false,
-          splitOnWord: true,
         },
       });
 
-      const userText = transcript
+      // whisper-server returns clean text directly (no timestamps)
+      const userText = (typeof transcript === "string" ? transcript : "")
         .replace(
           /\[\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}\]\s*/g,
           "",
@@ -165,7 +160,7 @@ export class VoiceConversationEngine {
       // Cleanup temp file
       try {
         fs.unlinkSync(wavPath);
-      } catch {}
+      } catch { }
 
       return {
         success: true,
@@ -178,7 +173,7 @@ export class VoiceConversationEngine {
       // Cleanup temp file on error
       try {
         fs.unlinkSync(wavPath);
-      } catch {}
+      } catch { }
       return { success: false, error: error.message };
     }
   }
