@@ -92,6 +92,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("voice-chat:process", audioData, filename),
     pickAndProcess: () => ipcRenderer.invoke("voice-chat:pick-audio"),
     status: () => ipcRenderer.invoke("voice-chat:status"),
+    listRefAudios: () => ipcRenderer.invoke("tts:list-refs"),
+    processRefFile: (filename) =>
+      ipcRenderer.invoke("voice-chat:process-ref-file", filename),
   },
 
   // Qwen3 - Local AI (node-llama-cpp)

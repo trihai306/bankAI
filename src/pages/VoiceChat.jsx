@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Mic, MicOff, Square, Volume2, Bot, User, AlertCircle, Check, Loader2, AudioLines, FileAudio } from 'lucide-react'
+import { Mic, MicOff, Square, Volume2, Bot, User, AlertCircle, Check, Loader2, AudioLines, FileAudio, FolderOpen, ChevronDown, ChevronUp, Play } from 'lucide-react'
 
 const SILENCE_THRESHOLD = 0.015
 const SILENCE_DURATION_MS = 2000
@@ -15,6 +15,10 @@ export default function VoiceChat() {
     const [volumeLevel, setVolumeLevel] = useState(0)
     const [isSilent, setIsSilent] = useState(false)
     const [error, setError] = useState(null)
+    const [refAudios, setRefAudios] = useState([])
+    const [showRefPanel, setShowRefPanel] = useState(false)
+    const [previewingFile, setPreviewingFile] = useState(null)
+    const previewAudioRef = useRef(null)
 
     const mediaRecorderRef = useRef(null)
     const audioContextRef = useRef(null)
@@ -25,12 +29,110 @@ export default function VoiceChat() {
     const animFrameRef = useRef(null)
     const isProcessingRef = useRef(false)
     const audioPlayerRef = useRef(null)
+    const isProcessingRefAudio = useRef(false)
 
     // Load voices on mount
     useEffect(() => {
         loadVoices()
+        loadRefAudios()
         return () => stopListening()
     }, [])
+
+    const loadRefAudios = async () => {
+        try {
+            const list = await window.electronAPI.voiceChat.listRefAudios()
+            setRefAudios(list || [])
+        } catch (err) {
+            console.error('Failed to load ref audios:', err)
+        }
+    }
+
+    const processRefAudio = async (filename) => {
+        if (isProcessingRef.current) return
+        setError(null)
+        isProcessingRef.current = true
+        setIsProcessing(true)
+
+        try {
+            if (!isListening) {
+                await window.electronAPI.voiceChat.start({
+                    voiceId: selectedVoiceId || undefined,
+                })
+            }
+
+            setPipelineStep('stt')
+            const result = await window.electronAPI.voiceChat.processRefFile(filename)
+
+            if (result.success) {
+                setPipelineStep('llm')
+                setMessages(prev => [
+                    ...prev,
+                    { role: 'user', content: result.transcript, timestamp: Date.now() },
+                ])
+
+                setPipelineStep('tts')
+                setMessages(prev => [
+                    ...prev,
+                    { role: 'assistant', content: result.responseText, timestamp: Date.now() },
+                ])
+
+                if (result.audioData) {
+                    setPipelineStep('playing')
+                    await playAudioData(result.audioData, result.audioMimeType || 'audio/wav')
+                }
+
+                setPipelineStep('done')
+            } else if (result.error !== 'No speech detected') {
+                setError(result.error)
+            }
+        } catch (err) {
+            console.error('Ref audio processing error:', err)
+            setError(`Processing failed: ${err.message}`)
+        } finally {
+            isProcessingRef.current = false
+            setIsProcessing(false)
+            setPipelineStep(null)
+
+            if (!isListening) {
+                try { await window.electronAPI.voiceChat.stop() } catch {}
+            }
+        }
+    }
+
+    const previewRefAudio = async (filepath, filename) => {
+        // Stop any current preview
+        if (previewAudioRef.current) {
+            previewAudioRef.current.pause()
+            previewAudioRef.current = null
+        }
+
+        if (previewingFile === filename) {
+            setPreviewingFile(null)
+            return
+        }
+
+        try {
+            const audioData = await window.electronAPI.tts.readAudio(filepath)
+            if (!audioData) return
+
+            const uint8 = new Uint8Array(audioData)
+            const blob = new Blob([uint8], { type: 'audio/wav' })
+            const url = URL.createObjectURL(blob)
+            const audio = new Audio(url)
+            previewAudioRef.current = audio
+            setPreviewingFile(filename)
+
+            audio.onended = () => {
+                URL.revokeObjectURL(url)
+                setPreviewingFile(null)
+                previewAudioRef.current = null
+            }
+            audio.play().catch(() => setPreviewingFile(null))
+        } catch (err) {
+            console.error('Preview error:', err)
+            setPreviewingFile(null)
+        }
+    }
 
     const loadVoices = async () => {
         try {
@@ -522,6 +624,45 @@ export default function VoiceChat() {
                 </div>
             )}
 
+            {/* Ref Audio Panel */}
+            {showRefPanel && (
+                <div className="border-t border-white/10 bg-white/[0.02]">
+                    <div className="p-4 max-h-48 overflow-y-auto">
+                        {refAudios.length === 0 ? (
+                            <p className="text-sm text-slate-500 text-center py-2">Không có file audio nào trong ref_audio</p>
+                        ) : (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                {refAudios.map((audio) => (
+                                    <div
+                                        key={audio.filename}
+                                        className="group flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/10 hover:border-cyan-500/30 hover:bg-white/[0.06] transition-all cursor-pointer"
+                                        onClick={() => processRefAudio(audio.filename)}
+                                    >
+                                        <div className="w-8 h-8 rounded-md bg-cyan-500/10 flex items-center justify-center flex-shrink-0">
+                                            <FileAudio className="w-4 h-4 text-cyan-400" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-xs text-white truncate font-medium">{audio.filename}</p>
+                                            <p className="text-[10px] text-slate-500">Click để xử lý</p>
+                                        </div>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation()
+                                                previewRefAudio(audio.path, audio.filename)
+                                            }}
+                                            className="opacity-0 group-hover:opacity-100 w-6 h-6 rounded-full flex items-center justify-center bg-white/10 hover:bg-cyan-500/20 transition-all"
+                                            title="Nghe thử"
+                                        >
+                                            <Play className={`w-3 h-3 ${previewingFile === audio.filename ? 'text-cyan-400' : 'text-slate-400'}`} />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* Bottom Control Bar */}
             <div className="p-6 border-t border-white/10">
                 <div className="flex items-center justify-center gap-6">
@@ -558,11 +699,25 @@ export default function VoiceChat() {
                         )}
                     </button>
 
+                    {/* Ref Audio Panel Toggle */}
+                    <button
+                        onClick={() => setShowRefPanel(v => !v)}
+                        disabled={isProcessing}
+                        title="Chọn audio từ thư mục ref_audio"
+                        className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 disabled:opacity-50 border ${
+                            showRefPanel
+                                ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
+                                : 'bg-white/[0.06] border-white/10 hover:bg-white/[0.1] hover:border-cyan-500/30 text-slate-400 hover:text-cyan-400'
+                        }`}
+                    >
+                        <FolderOpen className="w-5 h-5" />
+                    </button>
+
                     {/* Upload Audio File Button */}
                     <button
                         onClick={pickAudioFile}
                         disabled={isProcessing}
-                        title="Chọn file âm thanh để xử lý"
+                        title="Chọn file âm thanh từ máy tính"
                         className="w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 disabled:opacity-50 bg-white/[0.06] border border-white/10 hover:bg-white/[0.1] hover:border-cyan-500/30 text-slate-400 hover:text-cyan-400"
                     >
                         <FileAudio className="w-5 h-5" />
