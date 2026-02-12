@@ -15,6 +15,7 @@ import sys
 import json
 import argparse
 import subprocess
+import platform
 from pathlib import Path
 
 # Đường dẫn mặc định
@@ -25,11 +26,15 @@ OUTPUT_DIR = SCRIPT_DIR / "outputs"
 VOCAB_FILE = MODEL_DIR / "vocab.txt"
 CKPT_FILE = MODEL_DIR / "model_last.pt"
 
+# Cross-platform venv paths
+IS_WINDOWS = platform.system() == "Windows"
+VENV_BIN = SCRIPT_DIR / "venv" / ("Scripts" if IS_WINDOWS else "bin")
+
 
 def check_installation():
     """Kiểm tra F5-TTS đã cài đặt chưa"""
-    # Check CLI in venv/bin instead of system PATH
-    venv_cli = SCRIPT_DIR / "venv" / "bin" / "f5-tts_infer-cli"
+    cli_name = "f5-tts_infer-cli.exe" if IS_WINDOWS else "f5-tts_infer-cli"
+    venv_cli = VENV_BIN / cli_name
     cli_available = venv_cli.exists()
     
     return {
@@ -88,8 +93,9 @@ def generate(ref_audio: str, ref_text: str, gen_text: str, output: str = None, s
     output_dir = Path(output).parent
     output_file = Path(output).name
     
-    # Chạy f5-tts_infer-cli from venv
-    venv_cli = SCRIPT_DIR / "venv" / "bin" / "f5-tts_infer-cli"
+    # Chạy f5-tts_infer-cli from venv (cross-platform)
+    cli_name = "f5-tts_infer-cli.exe" if IS_WINDOWS else "f5-tts_infer-cli"
+    venv_cli = VENV_BIN / cli_name
     cmd = [
         str(venv_cli),
         "--model", "F5TTS_Base",

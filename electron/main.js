@@ -1,13 +1,68 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import path from "path";
-import { fileURLToPath } from "url";
-import { spawn } from "child_process";
+import { fileURLToPath, pathToFileURL } from "url";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+const { nodewhisper } = require("nodejs-whisper");
+
+// Fix shelljs execPath for Electron: shelljs skips process.execPath in Electron,
+// but nodejs-whisper needs it for ffmpeg conversion via shelljs.exec()
+const shelljs = require("shelljs");
+const nodeBin = shelljs.which("node");
+if (nodeBin) {
+    shelljs.config.execPath = nodeBin.toString();
+}
+
+import { spawn, execFile, execFileSync } from "child_process";
 import fs from "fs";
+import os from "os";
 import { getLlama, LlamaChatSession, resolveModelFile } from "node-llama-cpp";
 import { initDB, dbAPI } from "./db.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Cross-platform Python path helpers
+const isWindows = process.platform === "win32";
+const PYTHON_DIR = path.join(__dirname, "..", "python");
+
+function getPythonPaths() {
+    const venvDir = path.join(PYTHON_DIR, "venv");
+    if (isWindows) {
+        return {
+            python: path.join(venvDir, "Scripts", "python.exe"),
+            pip: path.join(venvDir, "Scripts", "pip.exe"),
+            cli: path.join(venvDir, "Scripts", "f5-tts_infer-cli.exe"),
+        };
+    }
+    return {
+        python: path.join(venvDir, "bin", "python"),
+        pip: path.join(venvDir, "bin", "pip"),
+        cli: path.join(venvDir, "bin", "f5-tts_infer-cli"),
+    };
+}
+
+function getSystemPython() {
+    const candidates = isWindows
+        ? ["python", "python3", "py"]
+        : ["python3", "python"];
+    for (const cmd of candidates) {
+        try {
+            const result = execFileSync(cmd, ["--version"], {
+                encoding: "utf8",
+                timeout: 5000,
+                stdio: ["pipe", "pipe", "pipe"],
+            });
+            const ver = result.trim().split(" ").pop();
+            const [major, minor] = ver.split(".").map(Number);
+            if (major === 3 && minor >= 12) return cmd;
+        } catch {
+            continue;
+        }
+    }
+    return null;
+}
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -124,13 +179,12 @@ const REF_AUDIO_DIR = path.join(__dirname, "..", "python", "ref_audio");
     }
 });
 
-// Helper to run Python script using venv
+// Helper to run Python script using venv (cross-platform)
 function runPython(args) {
     return new Promise((resolve, reject) => {
-        const pythonDir = path.join(__dirname, "..", "python");
-        const venvPython = path.join(pythonDir, "venv", "bin", "python");
+        const { python: venvPython } = getPythonPaths();
         const python = spawn(venvPython, [PYTHON_SCRIPT, ...args], {
-            cwd: pythonDir,
+            cwd: PYTHON_DIR,
         });
         let stdout = "";
         let stderr = "";
@@ -472,68 +526,44 @@ ipcMain.handle("tts:read-audio", async (event, filepath) => {
     }
 });
 
-// Transcribe audio to text using Whisper
+// Transcribe audio to text using whisper.cpp (via nodejs-whisper)
 ipcMain.handle("tts:transcribe-audio", async (event, audioPath) => {
-    console.log("=== TRANSCRIBE AUDIO CALLED ===");
+    console.log("=== TRANSCRIBE AUDIO (whisper.cpp) ===");
     console.log("Audio path:", audioPath);
 
     try {
-        // Validate file exists
         if (!fs.existsSync(audioPath)) {
             return { success: false, error: "Audio file not found" };
         }
 
-        const pythonPath = path.join(__dirname, "../python/venv/bin/python3");
-        const scriptPath = path.join(__dirname, "../python/transcribe.py");
-
-        console.log("Python path:", pythonPath);
-        console.log("Script path:", scriptPath);
-        console.log("Spawning transcription process...");
-
-        return new Promise((resolve, reject) => {
-            const transcribe = spawn(pythonPath, [
-                scriptPath,
-                audioPath,
-                "medium",
-            ]);
-            let stdout = "";
-            let stderr = "";
-
-            transcribe.stdout.on("data", (data) => {
-                stdout += data.toString();
-            });
-
-            transcribe.stderr.on("data", (data) => {
-                stderr += data.toString();
-            });
-
-            transcribe.on("close", (code) => {
-                console.log("Transcription process closed with code:", code);
-                console.log("Stdout:", stdout);
-
-                if (code === 0) {
-                    try {
-                        const result = JSON.parse(stdout);
-                        resolve(result);
-                    } catch (e) {
-                        resolve({
-                            success: false,
-                            error: "Failed to parse transcription result",
-                        });
-                    }
-                } else {
-                    resolve({
-                        success: false,
-                        error: `Transcription failed with code ${code}`,
-                    });
-                }
-            });
-
-            transcribe.on("error", (err) => {
-                console.error("Transcription spawn error:", err);
-                resolve({ success: false, error: err.message });
-            });
+        const transcript = await nodewhisper(audioPath, {
+            modelName: "medium",
+            autoDownloadModelName: "medium",
+            removeWavFileAfterTranscription: false,
+            whisperOptions: {
+                language: "vi",
+                outputInText: false,
+                outputInJson: false,
+                splitOnWord: true,
+            },
         });
+
+        // nodewhisper returns raw transcript text with timestamps
+        // Parse out just the text content (remove [HH:MM:SS.mmm --> HH:MM:SS.mmm] timestamps)
+        const text = transcript
+            .replace(
+                /\[\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}\]\s*/g,
+                "",
+            )
+            .trim();
+
+        console.log("Transcription result:", text);
+
+        return {
+            success: true,
+            text,
+            language: "vi",
+        };
     } catch (error) {
         console.error("Transcription error:", error);
         return { success: false, error: error.message };
@@ -652,6 +682,129 @@ ipcMain.handle("qwen:process-text", async (event, text, task = "correct") => {
             task: task,
             warning: "Qwen3 not available - returned original text",
         };
+    }
+});
+
+// Python Environment Management IPC
+const SETUP_SCRIPT = path.join(PYTHON_DIR, "setup_env.py");
+
+ipcMain.handle("python:get-platform", () => {
+    return {
+        platform: process.platform,
+        arch: process.arch,
+        isWindows,
+        nodeVersion: process.version,
+        homeDir: os.homedir(),
+    };
+});
+
+ipcMain.handle("python:check-env", async () => {
+    try {
+        const sysPython = getSystemPython();
+        if (!sysPython) {
+            return {
+                ready: false,
+                error: "Python 3.12+ not found on system",
+                systemPython: null,
+            };
+        }
+
+        return new Promise((resolve, reject) => {
+            const proc = spawn(sysPython, [SETUP_SCRIPT, "check"], {
+                cwd: PYTHON_DIR,
+            });
+            let stdout = "";
+            let stderr = "";
+
+            proc.stdout.on("data", (data) => {
+                stdout += data.toString();
+            });
+            proc.stderr.on("data", (data) => {
+                stderr += data.toString();
+            });
+
+            proc.on("close", (code) => {
+                if (code === 0) {
+                    try {
+                        const lines = stdout.trim().split("\n");
+                        const lastLine = lines[lines.length - 1];
+                        const result = JSON.parse(lastLine);
+                        resolve(result);
+                    } catch {
+                        resolve({
+                            ready: false,
+                            error: "Failed to parse check result",
+                            raw: stdout,
+                        });
+                    }
+                } else {
+                    resolve({
+                        ready: false,
+                        error: stderr || `Check failed with code ${code}`,
+                    });
+                }
+            });
+
+            proc.on("error", (err) => {
+                resolve({ ready: false, error: err.message });
+            });
+        });
+    } catch (error) {
+        return { ready: false, error: error.message };
+    }
+});
+
+ipcMain.handle("python:setup-env", async (event) => {
+    try {
+        const sysPython = getSystemPython();
+        if (!sysPython) {
+            return {
+                success: false,
+                error: "Python 3.10+ not found on system",
+            };
+        }
+
+        const win = BrowserWindow.fromWebContents(event.sender);
+
+        return new Promise((resolve) => {
+            const proc = spawn(sysPython, [SETUP_SCRIPT, "setup"], {
+                cwd: PYTHON_DIR,
+            });
+            let lastEvent = null;
+
+            proc.stdout.on("data", (data) => {
+                const lines = data.toString().trim().split("\n");
+                for (const line of lines) {
+                    try {
+                        const parsed = JSON.parse(line);
+                        lastEvent = parsed;
+                        if (win && !win.isDestroyed()) {
+                            win.webContents.send(
+                                "python:setup-progress",
+                                parsed,
+                            );
+                        }
+                    } catch {
+                        // Non-JSON output, ignore
+                    }
+                }
+            });
+
+            proc.stderr.on("data", (data) => {
+                console.error("setup_env.py stderr:", data.toString());
+            });
+
+            proc.on("close", (code) => {
+                const success = code === 0 && lastEvent?.success !== false;
+                resolve({ success, lastEvent });
+            });
+
+            proc.on("error", (err) => {
+                resolve({ success: false, error: err.message });
+            });
+        });
+    } catch (error) {
+        return { success: false, error: error.message };
     }
 });
 

@@ -82,4 +82,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
             ipcRenderer.invoke("qwen:process-text", text, task),
         getStatus: () => ipcRenderer.invoke("qwen:status"),
     },
+
+    // Python Environment Management
+    python: {
+        checkEnv: () => ipcRenderer.invoke("python:check-env"),
+        setupEnv: () => ipcRenderer.invoke("python:setup-env"),
+        getPlatform: () => ipcRenderer.invoke("python:get-platform"),
+        onSetupProgress: (callback) =>
+            ipcRenderer.on("python:setup-progress", (_, data) =>
+                callback(data),
+            ),
+        removeSetupProgress: () =>
+            ipcRenderer.removeAllListeners("python:setup-progress"),
+    },
 });

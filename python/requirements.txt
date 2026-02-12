@@ -1,0 +1,13 @@
+# Core ML
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# F5-TTS dependencies (installed separately via pip install -e)
+# These are common deps that F5-TTS needs
+soundfile>=0.12.0
+librosa>=0.10.0
+numpy>=1.24.0
+
+# Utilities
+jieba>=0.42.1
+pypinyin>=0.50.0

@@ -80,7 +80,7 @@ python/
 ```
 
 ## Yêu cầu hệ thống
-- Python 3.10+
+- Python 3.12+
 - RAM 8GB+
 - GPU với CUDA (khuyến nghị, có thể chạy CPU nhưng chậm)
 - Dung lượng: ~6GB cho model
