@@ -165,6 +165,213 @@ ipcMain.handle("db:save-setting", (_, { key, value }) =>
   dbAPI.saveSetting(key, value),
 );
 
+// Voice Management IPC (CRUD)
+ipcMain.handle("voice:list", () => dbAPI.getVoices());
+ipcMain.handle("voice:get", (_, id) => dbAPI.getVoice(id));
+
+ipcMain.handle(
+  "voice:create",
+  async (_, { name, audioData, filename, transcript, filePath }) => {
+    try {
+      let finalPath;
+
+      if (filePath) {
+        // Use existing file from ref_audio directory
+        if (!fs.existsSync(filePath)) {
+          return { success: false, error: "File not found: " + filePath };
+        }
+        finalPath = filePath;
+      } else if (audioData) {
+        // Upload new recording
+        const refPath = path.join(
+          REF_AUDIO_DIR,
+          filename || `voice_${Date.now()}.webm`,
+        );
+        const buffer = Buffer.from(audioData);
+        fs.writeFileSync(refPath, buffer);
+
+        finalPath = refPath;
+
+        // Convert WebM to WAV if needed
+        if (refPath.endsWith(".webm")) {
+          const wavPath = refPath.replace(".webm", ".wav");
+          try {
+            await new Promise((resolve, reject) => {
+              const ffmpeg = spawn("ffmpeg", [
+                "-i",
+                refPath,
+                "-ar",
+                "24000",
+                "-ac",
+                "1",
+                "-sample_fmt",
+                "s16",
+                "-y",
+                wavPath,
+              ]);
+              ffmpeg.on("close", (code) => {
+                if (code === 0) {
+                  try {
+                    fs.unlinkSync(refPath);
+                  } catch {}
+                  resolve();
+                } else {
+                  reject(new Error(`ffmpeg exited with code ${code}`));
+                }
+              });
+              ffmpeg.on("error", reject);
+            });
+            finalPath = wavPath;
+          } catch (convErr) {
+            console.warn(
+              "WAV conversion failed, keeping original:",
+              convErr.message,
+            );
+          }
+        }
+      } else {
+        return { success: false, error: "No audio data or file path provided" };
+      }
+
+      const voice = dbAPI.createVoice({
+        name,
+        audio_path: finalPath,
+        transcript: transcript || "",
+      });
+      return { success: true, voice };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+);
+
+ipcMain.handle("voice:update", async (_, id, data) => {
+  try {
+    const { name, transcript, audioData, filename, filePath } = data;
+    const existingVoice = dbAPI.getVoice(id);
+    if (!existingVoice) return { success: false, error: "Voice not found" };
+
+    let newAudioPath;
+
+    if (filePath) {
+      // Use existing file from ref_audio
+      if (!fs.existsSync(filePath)) {
+        return { success: false, error: "File not found: " + filePath };
+      }
+      newAudioPath = filePath;
+    } else if (audioData) {
+      // Upload new recording
+      const refPath = path.join(
+        REF_AUDIO_DIR,
+        filename || `voice_${Date.now()}.webm`,
+      );
+      const buffer = Buffer.from(audioData);
+      fs.writeFileSync(refPath, buffer);
+      newAudioPath = refPath;
+
+      // Convert WebM to WAV
+      if (refPath.endsWith(".webm")) {
+        const wavPath = refPath.replace(".webm", ".wav");
+        try {
+          await new Promise((resolve, reject) => {
+            const ffmpeg = spawn("ffmpeg", [
+              "-i",
+              refPath,
+              "-ar",
+              "24000",
+              "-ac",
+              "1",
+              "-sample_fmt",
+              "s16",
+              "-y",
+              wavPath,
+            ]);
+            ffmpeg.on("close", (code) => {
+              if (code === 0) {
+                try {
+                  fs.unlinkSync(refPath);
+                } catch {}
+                resolve();
+              } else {
+                reject(new Error(`ffmpeg exited with code ${code}`));
+              }
+            });
+            ffmpeg.on("error", reject);
+          });
+          newAudioPath = wavPath;
+        } catch (convErr) {
+          console.warn("WAV conversion failed:", convErr.message);
+        }
+      }
+
+      // Cleanup old audio file if different
+      if (
+        existingVoice.audio_path &&
+        existingVoice.audio_path !== newAudioPath &&
+        fs.existsSync(existingVoice.audio_path)
+      ) {
+        try {
+          fs.unlinkSync(existingVoice.audio_path);
+        } catch {}
+      }
+    }
+
+    // Build update fields
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (transcript !== undefined) updateData.transcript = transcript;
+    if (newAudioPath) updateData.audio_path = newAudioPath;
+
+    dbAPI.updateVoice(id, updateData);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("voice:delete", (_, id) => {
+  try {
+    const voice = dbAPI.getVoice(id);
+    if (voice && voice.audio_path && fs.existsSync(voice.audio_path)) {
+      fs.unlinkSync(voice.audio_path);
+    }
+    dbAPI.deleteVoice(id);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("voice:test-generate", async (_, id, genText) => {
+  try {
+    const voice = dbAPI.getVoice(id);
+    if (!voice) return { success: false, error: "Voice not found" };
+
+    const result = await runPython([
+      "generate",
+      "--ref-audio",
+      voice.audio_path,
+      "--ref-text",
+      voice.transcript || "",
+      "--gen-text",
+      genText,
+      "--speed",
+      "1.0",
+    ]);
+
+    if (result.success) {
+      return {
+        success: true,
+        audioPath: result.output,
+        genText: result.gen_text,
+      };
+    }
+    return { success: false, error: result.error };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 // Voice Processing IPC
 ipcMain.handle("voice:start-recording", async () => {
   console.log("Starting voice recording...");
@@ -997,7 +1204,8 @@ ipcMain.handle("hardware:set-gpu-mode", async (_, mode) => {
 
 ipcMain.handle("hardware:rebuild-llama", async (_, gpuFlag) => {
   // gpuFlag: "false" | "cuda" — validate to prevent EINVAL on Windows
-  const safeGpuFlag = typeof gpuFlag === "string" && gpuFlag ? gpuFlag : "false";
+  const safeGpuFlag =
+    typeof gpuFlag === "string" && gpuFlag ? gpuFlag : "false";
   const npmCmd = isWindows ? "npx.cmd" : "npx";
   const args = [
     "--no",

@@ -56,6 +56,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getCallHistory: (filters) => ipcRenderer.invoke("history:calls", filters),
   },
 
+  // Voice Management (CRUD)
+  voices: {
+    list: () => ipcRenderer.invoke("voice:list"),
+    get: (id) => ipcRenderer.invoke("voice:get", id),
+    create: (data) => ipcRenderer.invoke("voice:create", data),
+    update: (id, data) => ipcRenderer.invoke("voice:update", id, data),
+    delete: (id) => ipcRenderer.invoke("voice:delete", id),
+    testGenerate: (id, text) =>
+      ipcRenderer.invoke("voice:test-generate", id, text),
+  },
+
   // TTS - F5-TTS Vietnamese (Voice Cloning)
   tts: {
     getStatus: () => ipcRenderer.invoke("tts:status"),
