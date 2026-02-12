@@ -90,6 +90,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     stop: () => ipcRenderer.invoke("voice-chat:stop"),
     process: (audioData, filename) =>
       ipcRenderer.invoke("voice-chat:process", audioData, filename),
+    pickAndProcess: () => ipcRenderer.invoke("voice-chat:pick-audio"),
     status: () => ipcRenderer.invoke("voice-chat:status"),
   },
 

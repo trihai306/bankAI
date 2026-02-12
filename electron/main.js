@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { createRequire } from "module";
@@ -1476,6 +1476,95 @@ ipcMain.handle("voice-chat:process", async (event, audioData, filename) => {
 
     return result;
   } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("voice-chat:pick-audio", async () => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: "Chọn file âm thanh",
+      filters: [
+        {
+          name: "Audio Files",
+          extensions: ["wav", "mp3", "webm", "ogg", "flac", "m4a"],
+        },
+      ],
+      properties: ["openFile"],
+    });
+
+    if (canceled || !filePaths.length) {
+      return { success: false, error: "cancelled" };
+    }
+
+    const filePath = filePaths[0];
+    const ext = path.extname(filePath).toLowerCase();
+
+    // Ensure voice engine is started
+    const engine = getVoiceEngine();
+    if (!engine.isActive) {
+      engine.start({});
+    }
+
+    let wavPath = filePath;
+
+    // Convert non-WAV files to WAV using ffmpeg
+    if (ext !== ".wav") {
+      const tmpDir = path.join(os.tmpdir(), "bankai-voice");
+      if (!fs.existsSync(tmpDir)) {
+        fs.mkdirSync(tmpDir, { recursive: true });
+      }
+      wavPath = path.join(tmpDir, `converted_${Date.now()}.wav`);
+
+      await new Promise((resolve, reject) => {
+        const ffmpeg = spawn("ffmpeg", [
+          "-i",
+          filePath,
+          "-ar",
+          "16000",
+          "-ac",
+          "1",
+          "-sample_fmt",
+          "s16",
+          "-y",
+          wavPath,
+        ]);
+
+        ffmpeg.on("close", (code) => {
+          if (code === 0) resolve();
+          else reject(new Error(`ffmpeg exited with code ${code}`));
+        });
+        ffmpeg.on("error", reject);
+      });
+    }
+
+    // Read WAV and process through voice engine
+    const audioBuffer = fs.readFileSync(wavPath);
+    const audioData = Array.from(new Uint8Array(audioBuffer));
+    const result = await engine.processAudioChunk(
+      audioData,
+      path.basename(wavPath),
+    );
+
+    // If TTS generated audio, read it and send back as buffer
+    if (result.success && result.audioPath && fs.existsSync(result.audioPath)) {
+      const ttsBuffer = fs.readFileSync(result.audioPath);
+      result.audioData = Array.from(ttsBuffer);
+      result.audioMimeType = "audio/wav";
+    }
+
+    // Cleanup converted temp file
+    if (wavPath !== filePath) {
+      try {
+        fs.unlinkSync(wavPath);
+      } catch {}
+    }
+
+    return result;
+  } catch (error) {
+    if (error.message === "cancelled") {
+      return { success: false, error: "cancelled" };
+    }
     return { success: false, error: error.message };
   }
 });

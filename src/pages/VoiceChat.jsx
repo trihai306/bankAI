@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Mic, MicOff, Square, Volume2, Bot, User, AlertCircle, Check, Loader2, AudioLines } from 'lucide-react'
+import { Mic, MicOff, Square, Volume2, Bot, User, AlertCircle, Check, Loader2, AudioLines, FileAudio } from 'lucide-react'
 
 const SILENCE_THRESHOLD = 0.015
 const SILENCE_DURATION_MS = 2000
@@ -312,6 +312,65 @@ export default function VoiceChat() {
         return buffer
     }
 
+    const pickAudioFile = async () => {
+        if (isProcessingRef.current) return
+        setError(null)
+        isProcessingRef.current = true
+        setIsProcessing(true)
+
+        try {
+            // Start voice engine if not active
+            if (!isListening) {
+                await window.electronAPI.voiceChat.start({
+                    voiceId: selectedVoiceId || undefined,
+                })
+            }
+
+            setPipelineStep('stt')
+            const result = await window.electronAPI.voiceChat.pickAndProcess()
+
+            if (result.error === 'cancelled') {
+                // User cancelled file dialog
+                return
+            }
+
+            if (result.success) {
+                setPipelineStep('llm')
+                setMessages(prev => [
+                    ...prev,
+                    { role: 'user', content: result.transcript, timestamp: Date.now() },
+                ])
+
+                setPipelineStep('tts')
+                setMessages(prev => [
+                    ...prev,
+                    { role: 'assistant', content: result.responseText, timestamp: Date.now() },
+                ])
+
+                if (result.audioData) {
+                    setPipelineStep('playing')
+                    await playAudioData(result.audioData, result.audioMimeType || 'audio/wav')
+                }
+
+                setPipelineStep('done')
+            } else if (result.error !== 'No speech detected') {
+                setError(result.error)
+            }
+        } catch (err) {
+            console.error('Pick audio error:', err)
+            setError(`Processing failed: ${err.message}`)
+        } finally {
+            isProcessingRef.current = false
+            setIsProcessing(false)
+            setPipelineStep(null)
+
+            // Stop engine if we started it just for this file
+            if (!isListening) {
+                try { await window.electronAPI.voiceChat.stop() } catch {}
+            }
+        }
+    }
+
     const getPipelineSteps = () => {
         const steps = [
             { key: 'stt', label: 'Whisper STT', icon: '🎤' },
@@ -499,6 +558,16 @@ export default function VoiceChat() {
                         )}
                     </button>
 
+                    {/* Upload Audio File Button */}
+                    <button
+                        onClick={pickAudioFile}
+                        disabled={isProcessing}
+                        title="Chọn file âm thanh để xử lý"
+                        className="w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 disabled:opacity-50 bg-white/[0.06] border border-white/10 hover:bg-white/[0.1] hover:border-cyan-500/30 text-slate-400 hover:text-cyan-400"
+                    >
+                        <FileAudio className="w-5 h-5" />
+                    </button>
+
                     {/* Status Text */}
                     {isListening && (
                         <div className="min-w-[120px] text-right">
@@ -518,7 +587,7 @@ export default function VoiceChat() {
 
                 {!isListening && (
                     <p className="text-center text-xs text-slate-600 mt-3">
-                        Bấm nút micro để bắt đầu trò chuyện bằng giọng nói
+                        Bấm micro để nói hoặc chọn file âm thanh để test
                     </p>
                 )}
             </div>
