@@ -6,7 +6,7 @@ export default function Settings() {
         language: 'vi-VN',
         autoAnswer: true,
         voiceEngine: 'vits',
-        llmModel: 'llama-3.2-8b',
+        llmModel: 'qwen3-4b',
         notifications: true,
         apiEndpoint: 'http://localhost:8000',
     })
@@ -187,18 +187,17 @@ export default function Settings() {
                                 onChange={(e) => updateSetting('llmModel', e.target.value)}
                                 className="w-full px-4 py-3 rounded-xl bg-[#0a0a12] border border-white/10 text-white focus:outline-none focus:border-violet-500/50 transition-colors appearance-none cursor-pointer"
                             >
+                                <option value="qwen3-4b">Qwen3 4B</option>
                                 <option value="llama-3.2-8b">Llama 3.2 8B</option>
-                                <option value="gemma-2-9b">Gemma 2 9B</option>
-                                <option value="phi-3-mini">Phi-3 Mini</option>
                             </select>
                         </div>
 
                         <div className="p-4 rounded-xl bg-slate-500/5 border border-white/5">
                             <div className="flex items-center gap-2 text-slate-400 mb-2">
                                 <AlertCircle className="w-4 h-4" />
-                                <span className="font-medium text-sm">Ollama Local</span>
+                                <span className="font-medium text-sm">node-llama-cpp Local</span>
                             </div>
-                            <p className="text-sm text-slate-500">Yêu cầu Ollama đang chạy trên máy</p>
+                            <p className="text-sm text-slate-500">Chạy model GGUF trực tiếp, không cần Ollama</p>
                         </div>
                     </div>
                 </div>

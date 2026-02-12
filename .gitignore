@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+models
 *.local
 
 # Python
@@ -33,3 +34,5 @@ python/ref_audio/*.wav
 *.njsproj
 *.sln
 *.sw?
+docs/
+# .agent/

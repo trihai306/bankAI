@@ -3,14 +3,14 @@ import { Brain, Cpu, HardDrive, Zap, Download, Trash2, RefreshCw, AlertCircle, P
 
 const defaultModels = [
     {
-        id: 'qwen-4b',
-        name: 'Qwen 4B',
+        id: 'qwen3-4b',
+        name: 'Qwen3 4B',
         type: 'LLM',
-        size: '2.3 GB',
+        size: '2.7 GB',
         status: 'downloading',
         params: '4B',
         context: '128K',
-        description: 'Model AI nhẹ cho xử lý văn bản, sửa lỗi tiếng Việt - Balance tốt giữa tốc độ và accuracy'
+        description: 'Model AI nhẹ cho xử lý văn bản, sửa lỗi tiếng Việt - Chạy qua node-llama-cpp (GGUF)'
     },
     {
         id: 'whisper-medium',
