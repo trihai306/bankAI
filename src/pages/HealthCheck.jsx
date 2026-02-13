@@ -313,29 +313,36 @@ export default function HealthCheck() {
         return `${labels[systemInfo.platform] || systemInfo.platform} ${archLabels[systemInfo.arch] || systemInfo.arch}`
     })()
 
+    // Server running states
+    const whisperServerRunning = hwInfo?.whisper?.serverStatus?.status === 'ready'
+    const llmWorkerRunning = qwenStatus?.status === 'ready'
+    const ttsServerRunning = hwInfo?.tts?.serverStatus?.status === 'ready'
+
     const overallHealth = (() => {
         const checks = [
-            hwInfo?.whisper?.ready,
-            hwInfo?.llm?.hasLocalBuild,
-            pythonEnv?.ready,
+            whisperServerRunning,
+            llmWorkerRunning,
+            ttsServerRunning,
         ]
         const passed = checks.filter(Boolean).length
-        if (passed === checks.length) return { label: 'Tất cả hệ thống hoạt động', status: 'healthy', color: 'emerald' }
-        if (passed > 0) return { label: `${passed}/${checks.length} hệ thống sẵn sàng`, status: 'partial', color: 'amber' }
-        return { label: 'Hệ thống chưa được cấu hình', status: 'unhealthy', color: 'red' }
+        if (passed === checks.length) return { label: `Tất cả ${passed} servers đang chạy`, status: 'healthy', color: 'emerald' }
+        if (passed > 0) return { label: `${passed}/${checks.length} servers đang chạy`, status: 'partial', color: 'amber' }
+        return { label: 'Chưa có server nào chạy', status: 'unhealthy', color: 'red' }
     })()
 
-    const whisperStatus = hwInfo?.whisper?.ready ? 'ready' : 'not_installed'
+    const whisperStatus = whisperServerRunning ? 'ready' :
+        hwInfo?.whisper?.serverStatus?.status === 'starting' ? 'loading' :
+            hwInfo?.whisper?.ready ? 'not_installed' : 'not_installed'
     const llmStatus = (() => {
         if (qwenStatus?.status === 'ready') return 'ready'
         if (qwenStatus?.status === 'loading') return 'loading'
         if (qwenStatus?.status === 'error') return 'error'
-        if (hwInfo?.llm?.hasLocalBuild) return 'ready'
         return 'not_installed'
     })()
     const f5Status = (() => {
+        if (ttsServerRunning) return 'ready'
+        if (hwInfo?.tts?.serverStatus?.status === 'starting') return 'loading'
         if (ttsStatus?.ready) return 'ready'
-        if (pythonEnv?.f5_tts_installed) return 'ready'
         return 'not_installed'
     })()
 
@@ -544,83 +551,63 @@ export default function HealthCheck() {
                     icon={Mic}
                     gradient="from-sky-500 to-blue-600"
                     status={whisperStatus}
+                    statusLabel={whisperServerRunning ? 'Server Running' : undefined}
                     model={hwInfo?.whisper?.models?.length ? hwInfo.whisper.models.join(', ') : null}
                     details={[
                         { ok: hwInfo?.whisper?.ready, label: 'whisper-cli binary' },
                         { ok: hwInfo?.whisper?.builtWithCuda, label: 'Built with CUDA' },
-                        { ok: hwInfo?.cudaAvailable, label: 'CUDA hardware available' },
+                        { ok: hwInfo?.cudaAvailable, label: 'CUDA hardware' },
+                        { ok: whisperServerRunning, label: 'Server đang chạy' },
                     ]}
                 >
-                    <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                        <p className="text-xs text-slate-500 mb-0.5">Engine</p>
-                        <p className="text-sm font-medium text-slate-300">
-                            {hwInfo?.whisper?.engine || 'whisper.cpp (whisper-server)'}
-                        </p>
-                    </div>
-
-                    {/* GPU-Only Mode Indicator */}
-                    <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-                        <div className="flex items-center gap-2">
-                            <Zap className="w-3.5 h-3.5 text-emerald-400" />
-                            <span className="text-sm font-semibold text-emerald-400">GPU Only (CUDA)</span>
-                        </div>
-                    </div>
-
-                    {/* Whisper Server Status */}
-                    <div className={`p-3 rounded-xl border ${hwInfo?.whisper?.serverStatus?.status === 'ready'
+                    {/* Server Running Status */}
+                    <div className={`p-3 rounded-xl border ${whisperServerRunning
                         ? 'bg-emerald-500/10 border-emerald-500/20'
                         : hwInfo?.whisper?.serverStatus?.status === 'starting'
                             ? 'bg-amber-500/10 border-amber-500/20'
-                            : 'bg-white/[0.02] border-white/5'
+                            : 'bg-red-500/10 border-red-500/20'
                         }`}>
-                        <p className="text-xs text-slate-500 mb-0.5">Server Status</p>
-                        <div className="flex items-center gap-2">
-                            <StatusDot status={
-                                hwInfo?.whisper?.serverStatus?.status === 'ready' ? 'ready' :
-                                    hwInfo?.whisper?.serverStatus?.status === 'starting' ? 'loading' :
-                                        hwInfo?.whisper?.serverStatus?.status === 'error' ? 'error' : 'not_installed'
-                            } />
-                            <span className={`text-sm font-medium ${hwInfo?.whisper?.serverStatus?.status === 'ready' ? 'text-emerald-400' :
-                                hwInfo?.whisper?.serverStatus?.status === 'starting' ? 'text-amber-400' :
-                                    'text-slate-500'
-                                }`}>
-                                {hwInfo?.whisper?.serverStatus?.status === 'ready' ? 'Model loaded in memory' :
-                                    hwInfo?.whisper?.serverStatus?.status === 'starting' ? 'Đang tải model...' :
-                                        hwInfo?.whisper?.serverStatus?.status === 'error' ? 'Lỗi' : 'Chưa khởi động'}
-                            </span>
-                            {hwInfo?.whisper?.serverStatus?.pid && (
-                                <span className="text-[10px] text-slate-600">
-                                    PID: {hwInfo.whisper.serverStatus.pid}
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <Power className={`w-3.5 h-3.5 ${whisperServerRunning ? 'text-emerald-400' :
+                                    hwInfo?.whisper?.serverStatus?.status === 'starting' ? 'text-amber-400 animate-pulse' : 'text-red-400'
+                                    }`} />
+                                <span className={`text-sm font-semibold ${whisperServerRunning ? 'text-emerald-400' :
+                                    hwInfo?.whisper?.serverStatus?.status === 'starting' ? 'text-amber-400' : 'text-red-400'
+                                    }`}>
+                                    {whisperServerRunning ? '● Running' :
+                                        hwInfo?.whisper?.serverStatus?.status === 'starting' ? '◌ Starting...' : '○ Stopped'}
                                 </span>
-                            )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                                {hwInfo?.whisper?.serverStatus?.pid && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-500">PID {hwInfo.whisper.serverStatus.pid}</span>
+                                )}
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-500">:8178</span>
+                            </div>
                         </div>
-                        {hwInfo?.whisper?.serverStatus?.status === 'ready' && (
-                            <p className="text-[10px] text-slate-600 mt-1">
-                                ✅ Model được giữ trong RAM — transcription nhanh, không cần load lại
-                            </p>
-                        )}
                     </div>
 
-                    {/* Build status */}
-                    <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                        <p className="text-xs text-slate-500 mb-0.5">Build hiện tại</p>
-                        <div className="flex items-center gap-2">
-                            {hwInfo?.whisper?.builtWithCuda ? (
-                                <span className="text-sm font-semibold text-emerald-400 flex items-center gap-1.5">
-                                    <Zap className="w-3.5 h-3.5" /> CUDA
-                                </span>
-                            ) : hwInfo?.whisper?.ready ? (
-                                <>
-                                    <span className="text-sm font-semibold text-amber-400 flex items-center gap-1.5">
-                                        <Cpu className="w-3.5 h-3.5" /> CPU (cần rebuild)
-                                    </span>
-                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                                        Cần rebuild CUDA
-                                    </span>
-                                </>
-                            ) : (
-                                <span className="text-sm text-slate-500">Chưa build</span>
-                            )}
+                    {/* CUDA + Build */}
+                    <div className="grid grid-cols-2 gap-2">
+                        <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5">
+                            <p className="text-[10px] text-slate-600 mb-0.5">GPU Mode</p>
+                            <div className="flex items-center gap-1.5">
+                                <Zap className="w-3 h-3 text-emerald-400" />
+                                <span className="text-xs font-semibold text-emerald-400">CUDA</span>
+                            </div>
+                        </div>
+                        <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5">
+                            <p className="text-[10px] text-slate-600 mb-0.5">Build</p>
+                            <div className="flex items-center gap-1.5">
+                                {hwInfo?.whisper?.builtWithCuda ? (
+                                    <span className="text-xs font-semibold text-emerald-400">✓ CUDA</span>
+                                ) : hwInfo?.whisper?.ready ? (
+                                    <span className="text-xs font-semibold text-amber-400">⚠ CPU</span>
+                                ) : (
+                                    <span className="text-xs text-slate-500">—</span>
+                                )}
+                            </div>
                         </div>
                     </div>
 
@@ -637,9 +624,6 @@ export default function HealthCheck() {
                         )}
                         {rebuildingWhisper ? 'Building...' : 'Rebuild (CUDA)'}
                     </button>
-                    <p className="text-[10px] text-slate-600">
-                        ⚠️ Rebuild sẽ xoá build cũ và compile lại whisper.cpp với CUDA.
-                    </p>
                 </EngineCard>
 
                 {/* LLM (node-llama-cpp) */}
@@ -648,27 +632,44 @@ export default function HealthCheck() {
                     icon={Brain}
                     gradient="from-emerald-500 to-green-600"
                     status={llmStatus}
-                    statusLabel={qwenStatus?.status === 'loading' ? 'Đang tải model...' : undefined}
+                    statusLabel={llmWorkerRunning ? 'Worker Running' : qwenStatus?.status === 'loading' ? 'Loading...' : undefined}
                     model={qwenStatus?.model || 'Qwen3 4B'}
                     details={[
                         { ok: hwInfo?.llm?.hasLocalBuild, label: 'node-llama-cpp binary' },
-                        { ok: qwenStatus?.status === 'ready', label: 'Model loaded' },
+                        { ok: llmWorkerRunning, label: 'Worker đang chạy' },
                         { ok: hwInfo?.cudaAvailable, label: 'CUDA support' },
                     ]}
                 >
-                    <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                        <p className="text-xs text-slate-500 mb-0.5">Engine</p>
-                        <p className="text-sm font-medium text-slate-300">
-                            {qwenStatus?.engine || hwInfo?.llm?.engine || 'node-llama-cpp'}
-                        </p>
-                    </div>
-
-                    {/* GPU-Only Mode Indicator */}
-                    <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-                        <div className="flex items-center gap-2">
-                            <Zap className="w-3.5 h-3.5 text-emerald-400" />
-                            <span className="text-sm font-semibold text-emerald-400">GPU Only (CUDA)</span>
+                    {/* Worker Running Status */}
+                    <div className={`p-3 rounded-xl border ${llmWorkerRunning
+                        ? 'bg-emerald-500/10 border-emerald-500/20'
+                        : qwenStatus?.status === 'loading'
+                            ? 'bg-amber-500/10 border-amber-500/20'
+                            : 'bg-red-500/10 border-red-500/20'
+                        }`}>
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <Power className={`w-3.5 h-3.5 ${llmWorkerRunning ? 'text-emerald-400' :
+                                    qwenStatus?.status === 'loading' ? 'text-amber-400 animate-pulse' : 'text-red-400'
+                                    }`} />
+                                <span className={`text-sm font-semibold ${llmWorkerRunning ? 'text-emerald-400' :
+                                    qwenStatus?.status === 'loading' ? 'text-amber-400' : 'text-red-400'
+                                    }`}>
+                                    {llmWorkerRunning ? '● Running' :
+                                        qwenStatus?.status === 'loading' ? '◌ Loading...' :
+                                            qwenStatus?.status === 'error' ? '✕ Error' : '○ Stopped'}
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-500">Worker</span>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-500">
+                                    <Zap className="w-2.5 h-2.5 inline text-emerald-400" /> CUDA
+                                </span>
+                            </div>
                         </div>
+                        {qwenStatus?.error && (
+                            <p className="text-[10px] text-red-400 mt-1">{qwenStatus.error}</p>
+                        )}
                     </div>
 
                     {/* Action buttons */}
@@ -698,9 +699,6 @@ export default function HealthCheck() {
                             Reset Model
                         </button>
                     </div>
-                    <p className="text-[10px] text-slate-600">
-                        ⚠️ Rebuild cần thời gian. Tất cả engines sử dụng GPU (CUDA).
-                    </p>
                 </EngineCard>
 
                 {/* F5-TTS (GPU Only) */}
@@ -709,63 +707,58 @@ export default function HealthCheck() {
                     icon={Music}
                     gradient="from-pink-500 to-rose-600"
                     status={f5Status}
+                    statusLabel={ttsServerRunning ? 'Server Running' : undefined}
                     model={ttsStatus?.model_exists ? 'F5-TTS Vietnamese' : null}
-
                     details={[
                         { ok: pythonEnv?.venv_exists, label: 'Python Venv' },
-                        { ok: pythonEnv?.torch_installed, label: 'PyTorch' },
+                        { ok: pythonEnv?.torch_installed, label: 'PyTorch + CUDA' },
                         { ok: pythonEnv?.f5_tts_installed, label: 'F5-TTS package' },
-                        { ok: pythonEnv?.f5_tts_cloned, label: 'F5-TTS Repo' },
-                        { ok: pythonEnv?.cli_available, label: 'TTS CLI' },
-                        { ok: pythonEnv?.requirements_exist, label: 'requirements.txt' },
+                        { ok: ttsServerRunning, label: 'Server đang chạy' },
                     ]}
                 >
-                    <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                        <p className="text-xs text-slate-500 mb-0.5">Engine</p>
-                        <p className="text-sm font-medium text-slate-300">
-                            {ttsStatus?.engine || 'F5-TTS Vietnamese'}
-                        </p>
-                    </div>
-
-                    {/* GPU-Only Mode Indicator */}
-                    <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                    {/* Server Running Status */}
+                    <div className={`p-3 rounded-xl border ${ttsServerRunning
+                        ? 'bg-emerald-500/10 border-emerald-500/20'
+                        : hwInfo?.tts?.serverStatus?.status === 'starting'
+                            ? 'bg-amber-500/10 border-amber-500/20'
+                            : 'bg-red-500/10 border-red-500/20'
+                        }`}>
                         <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-xs text-slate-500 mb-0.5">Chế độ chạy</p>
-                                <div className="flex items-center gap-2">
-                                    <Zap className="w-3.5 h-3.5 text-emerald-400" />
-                                    <span className="text-sm font-semibold text-emerald-400">GPU Only (CUDA)</span>
-                                </div>
+                            <div className="flex items-center gap-2">
+                                <Power className={`w-3.5 h-3.5 ${ttsServerRunning ? 'text-emerald-400' :
+                                    hwInfo?.tts?.serverStatus?.status === 'starting' ? 'text-amber-400 animate-pulse' : 'text-red-400'
+                                    }`} />
+                                <span className={`text-sm font-semibold ${ttsServerRunning ? 'text-emerald-400' :
+                                    hwInfo?.tts?.serverStatus?.status === 'starting' ? 'text-amber-400' : 'text-red-400'
+                                    }`}>
+                                    {ttsServerRunning ? '● Running' :
+                                        hwInfo?.tts?.serverStatus?.status === 'starting' ? '◌ Starting...' : '○ Stopped'}
+                                </span>
                             </div>
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                                Bắt buộc
-                            </span>
+                            <div className="flex items-center gap-2">
+                                {hwInfo?.tts?.serverStatus?.pid && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-500">PID {hwInfo.tts.serverStatus.pid}</span>
+                                )}
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-500">:8179</span>
+                            </div>
                         </div>
                     </div>
 
-                    <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                        <p className="text-xs text-slate-500 mb-0.5">PyTorch Backend</p>
-                        <p className="text-sm font-medium text-slate-300">
-                            {pythonEnv?.torch_installed ? (
-                                hwInfo?.cudaAvailable ? (
-                                    <span className="text-emerald-400 font-semibold">GPU (PyTorch CUDA)</span>
-                                ) : (
-                                    <span className="text-amber-400 font-semibold">⚠️ CUDA không khả dụng</span>
-                                )
-                            ) : (
-                                <span className="text-slate-500">N/A</span>
-                            )}
-                        </p>
-                        {!hwInfo?.cudaAvailable && (
-                            <p className="text-[10px] text-red-400 mt-0.5">
-                                ❌ F5-TTS yêu cầu NVIDIA GPU với CUDA. Vui lòng kiểm tra driver GPU.
-                            </p>
-                        )}
-                        {hwInfo?.cudaAvailable && (
-                            <p className="text-[10px] text-slate-600 mt-0.5">
-                                ✅ CUDA sẵn sàng • Cần đủ VRAM cho model (~5GB)
-                            </p>
-                        )}
+                    {/* CUDA + PyTorch */}
+                    <div className="grid grid-cols-2 gap-2">
+                        <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5">
+                            <p className="text-[10px] text-slate-600 mb-0.5">GPU Mode</p>
+                            <div className="flex items-center gap-1.5">
+                                <Zap className="w-3 h-3 text-emerald-400" />
+                                <span className="text-xs font-semibold text-emerald-400">CUDA</span>
+                            </div>
+                        </div>
+                        <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5">
+                            <p className="text-[10px] text-slate-600 mb-0.5">PyTorch</p>
+                            <span className={`text-xs font-semibold ${pythonEnv?.torch_installed ? 'text-emerald-400' : 'text-slate-500'}`}>
+                                {pythonEnv?.torch_installed ? '✓ cu128' : '—'}
+                            </span>
+                        </div>
                     </div>
                 </EngineCard>
             </div>
