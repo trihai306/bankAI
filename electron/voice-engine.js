@@ -9,11 +9,12 @@ import os from "os";
  * Designed for reuse across VoiceChat (mic) and future PhoneCall (SIP) features.
  */
 export class VoiceConversationEngine {
-  constructor({ nodewhisper, workerPrompt, initQwenModel, runPython, dbAPI }) {
+  constructor({ nodewhisper, workerPrompt, initQwenModel, runPython, ttsServer, dbAPI }) {
     this.nodewhisper = nodewhisper;
     this.workerPrompt = workerPrompt;
     this.initQwenModel = initQwenModel;
     this.runPython = runPython;
+    this.ttsServer = ttsServer;
     this.dbAPI = dbAPI;
 
     this.isActive = false;
@@ -71,6 +72,9 @@ export class VoiceConversationEngine {
       return { success: false, error: "Voice engine not active" };
     }
 
+    const pipelineStart = performance.now();
+    const timings = {};
+
     const tmpDir = path.join(os.tmpdir(), "bankai-voice");
     if (!fs.existsSync(tmpDir)) {
       fs.mkdirSync(tmpDir, { recursive: true });
@@ -81,11 +85,15 @@ export class VoiceConversationEngine {
 
     try {
       // Step 1: Save audio buffer to temp WAV file
+      let stepStart = performance.now();
       console.log("[VoiceEngine] Step 1: Saving audio chunk...");
       const buffer = Buffer.from(audioData);
       fs.writeFileSync(wavPath, buffer);
+      timings.save = performance.now() - stepStart;
+      console.log(`[VoiceEngine] ⏱ Step 1 (Save): ${timings.save.toFixed(0)}ms`);
 
       // Step 2: Whisper STT (via persistent whisper-server)
+      stepStart = performance.now();
       console.log("[VoiceEngine] Step 2: Whisper STT...");
       const transcript = await this.nodewhisper(wavPath, {
         whisperOptions: {
@@ -100,7 +108,8 @@ export class VoiceConversationEngine {
           "",
         )
         .trim();
-
+      timings.stt = performance.now() - stepStart;
+      console.log(`[VoiceEngine] ⏱ Step 2 (STT): ${(timings.stt / 1000).toFixed(2)}s`);
       console.log("[VoiceEngine] Transcript:", userText);
 
       if (!userText || userText.length < 2) {
@@ -108,6 +117,7 @@ export class VoiceConversationEngine {
       }
 
       // Step 3: Llama LLM response
+      stepStart = performance.now();
       console.log("[VoiceEngine] Step 3: Llama LLM...");
       await this.initQwenModel();
 
@@ -121,6 +131,8 @@ export class VoiceConversationEngine {
         : `${this.systemPrompt}\n\nNgười dùng: ${userText}\n\nAI:`;
 
       const responseText = await this.workerPrompt(fullPrompt, 0.5, 0.9);
+      timings.llm = performance.now() - stepStart;
+      console.log(`[VoiceEngine] ⏱ Step 3 (LLM): ${(timings.llm / 1000).toFixed(2)}s`);
       console.log("[VoiceEngine] LLM Response:", responseText);
 
       // Save to history
@@ -129,33 +141,49 @@ export class VoiceConversationEngine {
         { role: "assistant", content: responseText },
       );
 
-      // Step 4: F5-TTS (only if voice is configured)
+      // Step 4: F5-TTS via persistent server (model stays in GPU memory)
       let audioPath = null;
       if (this.voiceConfig?.refAudio) {
-        console.log("[VoiceEngine] Step 4: F5-TTS...");
+        stepStart = performance.now();
+        console.log("[VoiceEngine] Step 4: F5-TTS (persistent server)...");
         try {
-          const ttsResult = await this.runPython([
-            "generate",
-            "--ref-audio",
-            this.voiceConfig.refAudio,
-            "--ref-text",
-            this.voiceConfig.refText || "",
-            "--gen-text",
-            responseText,
-            "--speed",
-            "1.0",
-          ]);
+          const ttsResult = await this.ttsServer.generate({
+            refAudio: this.voiceConfig.refAudio,
+            refText: this.voiceConfig.refText || "",
+            genText: responseText,
+            speed: 1.0,
+          });
+          timings.tts = performance.now() - stepStart;
 
           if (ttsResult.success) {
             audioPath = ttsResult.output;
+            const serverTimings = ttsResult.timings || {};
+            console.log(`[VoiceEngine] ⏱ Step 4 (TTS): ${(timings.tts / 1000).toFixed(2)}s (server: preprocess=${serverTimings.preprocess}s, generate=${serverTimings.generate}s)`);
             console.log("[VoiceEngine] TTS audio:", audioPath);
           } else {
-            console.warn("[VoiceEngine] TTS failed:", ttsResult.error);
+            console.warn(`[VoiceEngine] ⏱ Step 4 (TTS) FAILED after ${(timings.tts / 1000).toFixed(2)}s:`, ttsResult.error);
           }
         } catch (ttsErr) {
-          console.warn("[VoiceEngine] TTS error:", ttsErr.message);
+          timings.tts = performance.now() - stepStart;
+          console.warn(`[VoiceEngine] ⏱ Step 4 (TTS) ERROR after ${(timings.tts / 1000).toFixed(2)}s:`, ttsErr.message);
         }
       }
+
+      // Pipeline summary
+      const totalTime = performance.now() - pipelineStart;
+      timings.total = totalTime;
+      console.log("");
+      console.log("╔══════════════════════════════════════════╗");
+      console.log("║     🎤 Voice Pipeline Performance        ║");
+      console.log("╠══════════════════════════════════════════╣");
+      console.log(`║  Step 1 (Save)  : ${String(timings.save.toFixed(0)).padStart(6)}ms             ║`);
+      console.log(`║  Step 2 (STT)   : ${String((timings.stt / 1000).toFixed(2)).padStart(6)}s              ║`);
+      console.log(`║  Step 3 (LLM)   : ${String((timings.llm / 1000).toFixed(2)).padStart(6)}s              ║`);
+      console.log(`║  Step 4 (TTS)   : ${String(((timings.tts || 0) / 1000).toFixed(2)).padStart(6)}s              ║`);
+      console.log("╠══════════════════════════════════════════╣");
+      console.log(`║  ⚡ Total       : ${String((totalTime / 1000).toFixed(2)).padStart(6)}s              ║`);
+      console.log("╚══════════════════════════════════════════╝");
+      console.log("");
 
       // Cleanup temp file
       try {
@@ -167,6 +195,7 @@ export class VoiceConversationEngine {
         transcript: userText,
         responseText,
         audioPath,
+        timings,
       };
     } catch (error) {
       console.error("[VoiceEngine] Pipeline error:", error);

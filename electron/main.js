@@ -6,6 +6,7 @@ import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const { nodewhisper } = require("nodejs-whisper");
 import { whisperServer } from "./whisper-server.js";
+import { ttsServer } from "./tts-server.js";
 
 // Fix shelljs execPath for Electron: shelljs skips process.execPath in Electron,
 // but nodejs-whisper needs it for ffmpeg conversion via shelljs.exec()
@@ -155,10 +156,34 @@ app.on("window-all-closed", () => {
   }
 });
 
-// Cleanup whisper server on quit
+// Cleanup all servers/workers on quit
 app.on("before-quit", () => {
-  console.log("[App] Shutting down whisper server...");
+  console.log("[App] Shutting down all services...");
+
+  // 1. Whisper server (spawned process)
   whisperServer.stop();
+  console.log("[App] ✓ Whisper server stopped");
+
+  // 2. TTS server (spawned process)
+  ttsServer.stop();
+  console.log("[App] ✓ TTS server stopped");
+
+  // 3. Llama worker (forked process)
+  if (llamaWorker) {
+    try {
+      llamaWorker.send({ type: "exit" });
+    } catch { /* channel might be closed */ }
+    // Force kill after brief grace period
+    setTimeout(() => {
+      if (llamaWorker) {
+        try { llamaWorker.kill(); } catch { /* already dead */ }
+        llamaWorker = null;
+      }
+    }, 1000);
+    console.log("[App] ✓ Llama worker stop signal sent");
+  }
+
+  console.log("[App] All services cleanup initiated.");
 });
 
 // IPC Handlers
@@ -1443,6 +1468,7 @@ function getVoiceEngine() {
       workerPrompt,
       initQwenModel,
       runPython,
+      ttsServer,
       dbAPI,
     });
   }
@@ -1863,8 +1889,14 @@ async function preloadAllModels() {
   preloadStatus.startedAt = Date.now();
   broadcastPreloadStatus();
 
-  // Run both in parallel for faster startup
-  await Promise.allSettled([preloadWhisperModel(), preloadLlmModel()]);
+  // Run whisper + LLM + TTS server in parallel for faster startup
+  await Promise.allSettled([
+    preloadWhisperModel(),
+    preloadLlmModel(),
+    ttsServer.start().then((r) => {
+      console.log("[preload] TTS server:", r.success ? "ready" : r.error);
+    }),
+  ]);
 
   preloadStatus.completedAt = Date.now();
   const elapsed = (
