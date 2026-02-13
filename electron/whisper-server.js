@@ -97,7 +97,6 @@ class WhisperServerManager {
     }
 
     async _doStart(options = {}) {
-        const { useGpu = false } = options;
         const { execPath, modelPath, whisperDir } = this._getPaths();
 
         if (!execPath) {
@@ -133,9 +132,7 @@ class WhisperServerManager {
                 "--split-on-word",
             ];
 
-            if (!useGpu) {
-                args.push("--no-gpu");
-            }
+            // GPU is always enabled (no --no-gpu flag)
 
             console.log(
                 `[WhisperServer] Starting: ${execPath} ${args.join(" ")}`,

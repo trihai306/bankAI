@@ -811,9 +811,7 @@ ipcMain.handle("tts:transcribe-audio", async (event, audioPath) => {
     // Ensure whisper server is running
     if (!whisperServer.isReady()) {
       console.log("[Transcribe] Whisper server not ready, starting...");
-      const startResult = await whisperServer.start({
-        useGpu: getWhisperGpuMode() === "cuda",
-      });
+      const startResult = await whisperServer.start();
       if (!startResult.success) {
         return { success: false, error: `Whisper server failed to start: ${startResult.error}` };
       }
@@ -856,29 +854,8 @@ if (!fs.existsSync(MODELS_DIR)) {
   fs.mkdirSync(MODELS_DIR, { recursive: true });
 }
 
-// Read GPU preference from DB
-function getLlmGpuMode() {
-  try {
-    const settings = dbAPI.getSettings();
-    return settings.llmGpuMode || "auto"; // cpu | cuda | auto
-  } catch {
-    return "auto";
-  }
-}
-
-function getWhisperGpuMode() {
-  try {
-    const settings = dbAPI.getSettings();
-    return settings.whisperGpuMode || "cpu"; // cpu | cuda
-  } catch {
-    return "cpu";
-  }
-}
-
-function getTtsGpuMode() {
-  // F5-TTS only supports GPU (CUDA) - CPU mode is no longer available
-  return "cuda";
-}
+// All models run on GPU (CUDA) — no CPU fallback
+const GPU_MODE = "cuda";
 
 // Find system Node.js binary (not Electron's)
 function getSystemNode() {
@@ -948,9 +925,8 @@ async function initQwenModel() {
   modelLoadingPromise = new Promise((resolve, reject) => {
     try {
       modelStatus = "loading";
-      const gpuMode = getLlmGpuMode();
       console.log(
-        `=== INITIALIZING QWEN3 4B via worker process (${gpuMode}) ===`,
+        `=== INITIALIZING QWEN3 4B via worker process (${GPU_MODE}) ===`,
       );
 
       const nodeBin = getSystemNode();
@@ -1039,7 +1015,7 @@ async function initQwenModel() {
       // Send init command to worker
       llamaWorker.send({
         type: "init",
-        gpuMode,
+        gpuMode: GPU_MODE,
         modelsDir: MODELS_DIR,
         modelUri: MODEL_URI,
       });
@@ -1095,7 +1071,7 @@ ipcMain.handle("qwen:status", async () => {
     status: modelStatus,
     model: "Qwen3 4B",
     engine: "node-llama-cpp (worker)",
-    gpuMode: getLlmGpuMode(),
+    gpuMode: GPU_MODE,
   };
 });
 
@@ -1184,7 +1160,7 @@ ipcMain.handle("hardware:get-info", async () => {
     );
     if (fs.existsSync(cmakeCache)) {
       const content = fs.readFileSync(cmakeCache, "utf8");
-      whisperBuiltWithCuda = content.includes("GGML_CUDA:BOOL=ON");
+      whisperBuiltWithCuda = content.includes("GGML_CUDA:BOOL=ON") || content.includes("GGML_CUDA:BOOL=1");
     }
   } catch {
     /* ignore */
@@ -1193,41 +1169,36 @@ ipcMain.handle("hardware:get-info", async () => {
   return {
     gpu: gpuName,
     cudaAvailable,
+    gpuMode: GPU_MODE,
     whisper: {
       ready: whisperReady,
       engine: "whisper.cpp (whisper-server)",
-      gpuMode: getWhisperGpuMode(),
       builtWithCuda: whisperBuiltWithCuda,
       models: whisperModels,
       serverStatus: whisperServer.getStatus(),
     },
     llm: {
       engine: "node-llama-cpp (worker)",
-      gpuMode: getLlmGpuMode(),
       hasLocalBuild,
       modelStatus,
     },
     tts: {
-      gpuMode: getTtsGpuMode(),
+      engine: "F5-TTS (persistent server)",
+      serverStatus: ttsServer.getStatus(),
     },
   };
 });
 
 ipcMain.handle("hardware:get-gpu-mode", async () => {
-  return { gpuMode: getLlmGpuMode() };
+  return { gpuMode: GPU_MODE };
 });
 
-ipcMain.handle("hardware:set-gpu-mode", async (_, mode) => {
-  // mode: "cpu" | "cuda" | "auto"
-  dbAPI.saveSetting("llmGpuMode", mode);
-  console.log(`GPU mode set to: ${mode}`);
-  return { success: true, gpuMode: mode };
+// GPU mode is fixed to CUDA — these handlers kept for frontend compatibility
+ipcMain.handle("hardware:set-gpu-mode", async () => {
+  return { success: true, gpuMode: GPU_MODE };
 });
 
-ipcMain.handle("hardware:rebuild-llama", async (_, gpuFlag) => {
-  // gpuFlag: "false" | "cuda" — validate to prevent EINVAL on Windows
-  const safeGpuFlag =
-    typeof gpuFlag === "string" && gpuFlag ? gpuFlag : "false";
+ipcMain.handle("hardware:rebuild-llama", async () => {
   const npmCmd = isWindows ? "npx.cmd" : "npx";
   const args = [
     "--no",
@@ -1235,15 +1206,28 @@ ipcMain.handle("hardware:rebuild-llama", async (_, gpuFlag) => {
     "source",
     "build",
     "--gpu",
-    safeGpuFlag,
+    "cuda",
   ];
 
-  console.log(`Rebuilding llama.cpp with GPU=${safeGpuFlag}...`);
+  console.log(`Rebuilding llama.cpp with GPU=cuda...`);
+
+  // Stop llama worker first — it locks native binaries
+  if (llamaWorker) {
+    console.log("Stopping llama worker before rebuild...");
+    await disposeQwenModel();
+    // Give OS time to release file handles
+    await new Promise((r) => setTimeout(r, 1500));
+  }
 
   return new Promise((resolve) => {
     const child = crossSpawn(npmCmd, args, {
       cwd: path.join(__dirname, ".."),
       stdio: "pipe",
+      env: {
+        ...process.env,
+        CMAKE_CUDA_ARCHITECTURES: "120",    // RTX 5070 = sm_120
+        CUDAFLAGS: "--allow-unsupported-compiler", // VS 2026 support
+      },
     });
 
     let output = "";
@@ -1259,12 +1243,12 @@ ipcMain.handle("hardware:rebuild-llama", async (_, gpuFlag) => {
       resolve({
         success: code === 0,
         output: output.slice(-500),
-        gpuFlag,
+        gpuMode: GPU_MODE,
       });
     });
 
     child.on("error", (err) => {
-      resolve({ success: false, error: err.message, gpuFlag });
+      resolve({ success: false, error: err.message, gpuMode: GPU_MODE });
     });
   });
 });
@@ -1274,27 +1258,16 @@ ipcMain.handle("hardware:reset-llm", async () => {
   return { success: true, status: "not_loaded" };
 });
 
-// Whisper GPU mode
-ipcMain.handle("hardware:set-whisper-gpu-mode", async (_, mode) => {
-  // mode: "cpu" | "cuda"
-  dbAPI.saveSetting("whisperGpuMode", mode);
-  console.log(`Whisper GPU mode set to: ${mode}`);
-  return { success: true, gpuMode: mode };
+// GPU mode handlers (kept for frontend compat, always returns cuda)
+ipcMain.handle("hardware:set-whisper-gpu-mode", async () => {
+  return { success: true, gpuMode: GPU_MODE };
 });
 
-// TTS GPU mode - GPU (CUDA) only, CPU mode is not supported
-ipcMain.handle("hardware:set-tts-gpu-mode", async (_, mode) => {
-  if (mode !== "cuda") {
-    console.warn(`TTS only supports CUDA mode. Ignoring request for: ${mode}`);
-    return { success: false, error: "F5-TTS only supports GPU (CUDA) mode", gpuMode: "cuda" };
-  }
-  dbAPI.saveSetting("ttsGpuMode", "cuda");
-  console.log(`TTS GPU mode confirmed: cuda`);
-  return { success: true, gpuMode: "cuda" };
+ipcMain.handle("hardware:set-tts-gpu-mode", async () => {
+  return { success: true, gpuMode: GPU_MODE };
 });
 
-ipcMain.handle("hardware:rebuild-whisper", async (_, gpuMode) => {
-  // gpuMode: "cpu" | "cuda"
+ipcMain.handle("hardware:rebuild-whisper", async () => {
   const whisperCppPath = path.join(
     __dirname,
     "..",
@@ -1305,7 +1278,15 @@ ipcMain.handle("hardware:rebuild-whisper", async (_, gpuMode) => {
   );
   const buildDir = path.join(whisperCppPath, "build");
 
-  console.log(`Rebuilding whisper.cpp with GPU=${gpuMode}...`);
+  console.log(`Rebuilding whisper.cpp with GPU=cuda...`);
+
+  // Stop whisper server first — it locks DLLs in build dir
+  if (whisperServer.isReady()) {
+    console.log("Stopping whisper server before rebuild...");
+    whisperServer.stop();
+    // Give OS time to release file handles
+    await new Promise((r) => setTimeout(r, 1500));
+  }
 
   return new Promise((resolve) => {
     // Step 1: Remove existing build directory to force fresh CMake config
@@ -1318,17 +1299,23 @@ ipcMain.handle("hardware:rebuild-whisper", async (_, gpuMode) => {
       console.error("Failed to remove build dir:", e);
     }
 
-    // Step 2: Configure CMake
-    const cmakeArgs = ["-B", "build"];
-    if (gpuMode === "cuda") {
-      cmakeArgs.push("-DGGML_CUDA=1");
-    }
+    // Step 2: Configure CMake (sm_120 = RTX 5070, allow-unsupported-compiler for VS 2026)
+    const cmakeArgs = [
+      "-B", "build",
+      "-DGGML_CUDA=1",
+      "-DCMAKE_CUDA_ARCHITECTURES=120",
+      "-DCMAKE_CUDA_FLAGS=--allow-unsupported-compiler",
+    ];
 
     console.log("Running: cmake", cmakeArgs.join(" "));
     const cmakeCmd = isWindows ? "cmake.exe" : "cmake";
     const configProc = spawn(cmakeCmd, cmakeArgs, {
       cwd: whisperCppPath,
       stdio: "pipe",
+      env: {
+        ...process.env,
+        CUDAFLAGS: "--allow-unsupported-compiler", // VS 2026 support
+      },
     });
 
     let output = "";
@@ -1454,9 +1441,7 @@ function getVoiceEngine() {
     // Create a transcribe function that uses the persistent whisper server
     const whisperTranscribe = async (wavPath, options) => {
       if (!whisperServer.isReady()) {
-        await whisperServer.start({
-          useGpu: getWhisperGpuMode() === "cuda",
-        });
+        await whisperServer.start();
       }
       return whisperServer.transcribe(wavPath, {
         language: options?.whisperOptions?.language || "vi",
@@ -1846,9 +1831,7 @@ async function preloadWhisperModel() {
 
     // Now start the persistent whisper-server (model loads once, stays in memory)
     console.log("[preload] Starting persistent whisper-server...");
-    const serverResult = await whisperServer.start({
-      useGpu: getWhisperGpuMode() === "cuda",
-    });
+    const serverResult = await whisperServer.start();
 
     if (serverResult.success) {
       preloadStatus.whisper = "ready";

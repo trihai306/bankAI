@@ -5,16 +5,8 @@ import {
     ChevronDown, ChevronUp, HardDrive, Server, MemoryStick, Rocket, Power
 } from 'lucide-react'
 
-const GPU_MODES = [
-    { value: 'cpu', icon: Cpu, label: 'CPU', desc: 'Ổn định, mọi máy', color: 'cyan' },
-    { value: 'cuda', icon: Zap, label: 'CUDA', desc: 'NVIDIA GPU', color: 'emerald' },
-    { value: 'auto', icon: RefreshCw, label: 'Auto', desc: 'Tự phát hiện', color: 'amber' },
-]
-
-const WHISPER_MODES = [
-    { value: 'cpu', icon: Cpu, label: 'CPU', desc: 'Ổn định, mọi máy', color: 'cyan' },
-    { value: 'cuda', icon: Zap, label: 'CUDA', desc: 'NVIDIA GPU', color: 'emerald' },
-]
+// All engines run on GPU (CUDA) — no CPU fallback
+const GPU_MODE = 'cuda'
 
 // TTS only supports GPU (CUDA) mode - no user selection needed
 
@@ -187,11 +179,7 @@ export default function HealthCheck() {
     const [ttsStatus, setTtsStatus] = useState(null)
     const [lastScan, setLastScan] = useState(null)
 
-    // GPU modes per engine
-    const [llmGpuMode, setLlmGpuMode] = useState('cpu')
-    const [whisperGpuMode, setWhisperGpuMode] = useState('cpu')
-    // TTS is GPU-only, no state needed
-    const ttsGpuMode = 'cuda'
+    // All engines use GPU (CUDA) mode — no user selection
 
     // Action states
     const [rebuildingLlama, setRebuildingLlama] = useState(false)
@@ -216,9 +204,6 @@ export default function HealthCheck() {
 
             if (hw.status === 'fulfilled' && hw.value) {
                 setHwInfo(hw.value)
-                setLlmGpuMode(hw.value?.llm?.gpuMode || 'cpu')
-                setWhisperGpuMode(hw.value?.whisper?.gpuMode || 'cpu')
-                // TTS is GPU-only, no need to read setting
             }
             if (py.status === 'fulfilled') setPythonEnv(py.value)
             if (qwen.status === 'fulfilled') setQwenStatus(qwen.value)
@@ -272,30 +257,12 @@ export default function HealthCheck() {
 
     // === Handlers ===
 
-    const handleLlmModeChange = async (mode) => {
-        setLlmGpuMode(mode)
-        try {
-            await window.electronAPI?.hardware?.setGpuMode(mode)
-        } catch (e) {
-            console.error('Failed to set LLM GPU mode:', e)
-        }
-    }
-
-    const handleWhisperModeChange = async (mode) => {
-        setWhisperGpuMode(mode)
-        try {
-            await window.electronAPI?.hardware?.setWhisperGpuMode(mode)
-        } catch (e) {
-            console.error('Failed to set Whisper GPU mode:', e)
-        }
-    }
-
-    // TTS is GPU-only, no mode change handler needed
+    // All engines use GPU — no mode change handlers needed
 
     const handleRebuildWhisper = async () => {
         setRebuildingWhisper(true)
         try {
-            const result = await window.electronAPI?.hardware?.rebuildWhisper(whisperGpuMode)
+            const result = await window.electronAPI?.hardware?.rebuildWhisper()
             if (result?.success) {
                 await runFullScan()
             } else {
@@ -309,10 +276,9 @@ export default function HealthCheck() {
     }
 
     const handleRebuildLlama = async () => {
-        const gpuFlag = llmGpuMode === 'cuda' ? 'cuda' : 'false'
         setRebuildingLlama(true)
         try {
-            const result = await window.electronAPI?.hardware?.rebuildLlama(gpuFlag)
+            const result = await window.electronAPI?.hardware?.rebuildLlama()
             if (result?.success) {
                 // Rescan after rebuild
                 await runFullScan()
@@ -579,9 +545,6 @@ export default function HealthCheck() {
                     gradient="from-sky-500 to-blue-600"
                     status={whisperStatus}
                     model={hwInfo?.whisper?.models?.length ? hwInfo.whisper.models.join(', ') : null}
-                    mode={whisperGpuMode}
-                    modeOptions={WHISPER_MODES}
-                    onModeChange={handleWhisperModeChange}
                     details={[
                         { ok: hwInfo?.whisper?.ready, label: 'whisper-cli binary' },
                         { ok: hwInfo?.whisper?.builtWithCuda, label: 'Built with CUDA' },
@@ -595,12 +558,20 @@ export default function HealthCheck() {
                         </p>
                     </div>
 
+                    {/* GPU-Only Mode Indicator */}
+                    <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                        <div className="flex items-center gap-2">
+                            <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                            <span className="text-sm font-semibold text-emerald-400">GPU Only (CUDA)</span>
+                        </div>
+                    </div>
+
                     {/* Whisper Server Status */}
                     <div className={`p-3 rounded-xl border ${hwInfo?.whisper?.serverStatus?.status === 'ready'
-                            ? 'bg-emerald-500/10 border-emerald-500/20'
-                            : hwInfo?.whisper?.serverStatus?.status === 'starting'
-                                ? 'bg-amber-500/10 border-amber-500/20'
-                                : 'bg-white/[0.02] border-white/5'
+                        ? 'bg-emerald-500/10 border-emerald-500/20'
+                        : hwInfo?.whisper?.serverStatus?.status === 'starting'
+                            ? 'bg-amber-500/10 border-amber-500/20'
+                            : 'bg-white/[0.02] border-white/5'
                         }`}>
                         <p className="text-xs text-slate-500 mb-0.5">Server Status</p>
                         <div className="flex items-center gap-2">
@@ -610,8 +581,8 @@ export default function HealthCheck() {
                                         hwInfo?.whisper?.serverStatus?.status === 'error' ? 'error' : 'not_installed'
                             } />
                             <span className={`text-sm font-medium ${hwInfo?.whisper?.serverStatus?.status === 'ready' ? 'text-emerald-400' :
-                                    hwInfo?.whisper?.serverStatus?.status === 'starting' ? 'text-amber-400' :
-                                        'text-slate-500'
+                                hwInfo?.whisper?.serverStatus?.status === 'starting' ? 'text-amber-400' :
+                                    'text-slate-500'
                                 }`}>
                                 {hwInfo?.whisper?.serverStatus?.status === 'ready' ? 'Model loaded in memory' :
                                     hwInfo?.whisper?.serverStatus?.status === 'starting' ? 'Đang tải model...' :
@@ -630,7 +601,7 @@ export default function HealthCheck() {
                         )}
                     </div>
 
-                    {/* Current build mode indicator */}
+                    {/* Build status */}
                     <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
                         <p className="text-xs text-slate-500 mb-0.5">Build hiện tại</p>
                         <div className="flex items-center gap-2">
@@ -639,21 +610,17 @@ export default function HealthCheck() {
                                     <Zap className="w-3.5 h-3.5" /> CUDA
                                 </span>
                             ) : hwInfo?.whisper?.ready ? (
-                                <span className="text-sm font-semibold text-cyan-400 flex items-center gap-1.5">
-                                    <Cpu className="w-3.5 h-3.5" /> CPU
-                                </span>
+                                <>
+                                    <span className="text-sm font-semibold text-amber-400 flex items-center gap-1.5">
+                                        <Cpu className="w-3.5 h-3.5" /> CPU (cần rebuild)
+                                    </span>
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                        Cần rebuild CUDA
+                                    </span>
+                                </>
                             ) : (
                                 <span className="text-sm text-slate-500">Chưa build</span>
                             )}
-                            {/* Mismatch warning */}
-                            {hwInfo?.whisper?.ready && (
-                                (whisperGpuMode === 'cuda' && !hwInfo?.whisper?.builtWithCuda) ||
-                                (whisperGpuMode === 'cpu' && hwInfo?.whisper?.builtWithCuda)
-                            ) && (
-                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                                        Cần rebuild
-                                    </span>
-                                )}
                         </div>
                     </div>
 
@@ -668,10 +635,10 @@ export default function HealthCheck() {
                         ) : (
                             <Download className="w-3.5 h-3.5" />
                         )}
-                        {rebuildingWhisper ? 'Building...' : `Rebuild (${whisperGpuMode === 'cuda' ? 'CUDA' : 'CPU'})`}
+                        {rebuildingWhisper ? 'Building...' : 'Rebuild (CUDA)'}
                     </button>
                     <p className="text-[10px] text-slate-600">
-                        ⚠️ Rebuild sẽ xoá build cũ và compile lại whisper.cpp với chế độ đã chọn.
+                        ⚠️ Rebuild sẽ xoá build cũ và compile lại whisper.cpp với CUDA.
                     </p>
                 </EngineCard>
 
@@ -683,8 +650,6 @@ export default function HealthCheck() {
                     status={llmStatus}
                     statusLabel={qwenStatus?.status === 'loading' ? 'Đang tải model...' : undefined}
                     model={qwenStatus?.model || 'Qwen3 4B'}
-                    mode={llmGpuMode}
-                    onModeChange={handleLlmModeChange}
                     details={[
                         { ok: hwInfo?.llm?.hasLocalBuild, label: 'node-llama-cpp binary' },
                         { ok: qwenStatus?.status === 'ready', label: 'Model loaded' },
@@ -696,6 +661,14 @@ export default function HealthCheck() {
                         <p className="text-sm font-medium text-slate-300">
                             {qwenStatus?.engine || hwInfo?.llm?.engine || 'node-llama-cpp'}
                         </p>
+                    </div>
+
+                    {/* GPU-Only Mode Indicator */}
+                    <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                        <div className="flex items-center gap-2">
+                            <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                            <span className="text-sm font-semibold text-emerald-400">GPU Only (CUDA)</span>
+                        </div>
                     </div>
 
                     {/* Action buttons */}
@@ -710,7 +683,7 @@ export default function HealthCheck() {
                             ) : (
                                 <Download className="w-3.5 h-3.5" />
                             )}
-                            {rebuildingLlama ? 'Building...' : `Rebuild (${llmGpuMode === 'cuda' ? 'CUDA' : 'CPU'})`}
+                            {rebuildingLlama ? 'Building...' : 'Rebuild (CUDA)'}
                         </button>
                         <button
                             onClick={handleResetLlm}
@@ -726,7 +699,7 @@ export default function HealthCheck() {
                         </button>
                     </div>
                     <p className="text-[10px] text-slate-600">
-                        ⚠️ Rebuild cần thời gian. Đổi mode cần restart model.
+                        ⚠️ Rebuild cần thời gian. Tất cả engines sử dụng GPU (CUDA).
                     </p>
                 </EngineCard>
 

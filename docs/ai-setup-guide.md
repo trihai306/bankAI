@@ -12,15 +12,19 @@ Tài liệu hướng dẫn cài đặt đầy đủ các thành phần AI cho �
 
 ## Yêu cầu hệ thống
 
-| Thành phần | Yêu cầu tối thiểu | Khuyến nghị |
-|---|---|---|
-| **OS** | Ubuntu 22.04 / Windows 10 / macOS 12+ | Ubuntu 22.04+ |
-| **CPU** | x86_64 hoặc ARM64 | x86_64 |
-| **RAM** | 8 GB | 16 GB+ |
-| **GPU** | Không bắt buộc (CPU mode) | NVIDIA GPU với CUDA |
-| **Ổ đĩa** | 10 GB trống | 20 GB+ |
-| **Node.js** | v18+ | v20+ |
-| **Python** | 3.12+ (cho F5-TTS) | 3.12 |
+| Thành phần | Yêu cầu |
+|---|---|
+| **OS** | Windows 10/11 (x86_64) |
+| **CPU** | x86_64 với AVX2 |
+| **RAM** | 16 GB+ |
+| **GPU** | ⚠️ **BẮT BUỘC** — NVIDIA GPU với CUDA (RTX 30/40/50 series) |
+| **VRAM** | 8 GB+ (12 GB khuyến nghị) |
+| **CUDA Toolkit** | 12.8+ |
+| **Ổ đĩa** | 20 GB+ trống |
+| **Node.js** | v22+ |
+| **Python** | 3.11+ (cho F5-TTS) |
+
+> ⚠️ **GPU BẮT BUỘC:** Tất cả 3 engine AI (Whisper, LLM, TTS) đều chạy trên GPU (CUDA). Không có CPU fallback.
 
 ---
 
@@ -80,7 +84,7 @@ Xem hướng dẫn cài đặt thủ công chi tiết bên dưới.
 
 ---
 
-##### Bước 1: Cài Visual Studio Build Tools 2022
+##### Bước 1: Cài Visual Studio Build Tools 2022+
 
 Visual Studio Build Tools cung cấp **MSVC compiler** (`cl.exe`) — bắt buộc để compile native Node.js modules (whisper.cpp, better-sqlite3, node-llama-cpp...).
 
@@ -226,25 +230,37 @@ cd path\to\bankAI
 npm install
 ```
 
-##### 🔧 Build Whisper (Speech-to-Text)
+##### 🔧 Build Whisper (Speech-to-Text) — CUDA bắt buộc
 
 ```powershell
+# Tải model
 npx nodejs-whisper download
 # Chọn model: medium (khuyến nghị)
-# CUDA: y (nếu có NVIDIA GPU) hoặc n (CPU only)
+# CUDA: y (bắt buộc)
+
+# Nếu whisper.cpp build fail do CMake detect GPU, build thủ công:
+cd node_modules\nodejs-whisper\cpp\whisper.cpp
+Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
+cmake.exe -B build -DGGML_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES=120 -DCMAKE_CUDA_FLAGS="--allow-unsupported-compiler"
+cmake.exe --build build --config Release -j 11
+cd ..\..\..\..    
 ```
 
-##### 🔧 Build node-llama-cpp (LLM — Qwen3)
+> ⚠️ **RTX 50 series (sm_120):** Cần flag `-DCMAKE_CUDA_ARCHITECTURES=120`.
+> ⚠️ **VS 2026:** Cần flag `-DCMAKE_CUDA_FLAGS="--allow-unsupported-compiler"` vì CUDA 12.8 chỉ officially support VS 2017–2022.
+
+##### 🔧 Build node-llama-cpp (LLM — Qwen3) — CUDA bắt buộc
 
 ```powershell
-# CPU only
-npx --no node-llama-cpp source download
+# Set env vars cho RTX 50 + VS 2026
+$env:CMAKE_CUDA_ARCHITECTURES="120"
+$env:CUDAFLAGS="--allow-unsupported-compiler"
 
-# Với CUDA GPU acceleration (cần CUDA Toolkit 12.x đã cài)
-npx --no node-llama-cpp source download --gpu cuda
+# Build with CUDA
+npx --no node-llama-cpp source build --gpu cuda
 ```
 
-> 💡 **Tip:** Nếu build fail ở PowerShell, hãy mở **"x64 Native Tools Command Prompt for VS 2022"** từ Start Menu rồi chạy lại các lệnh trên.
+> 💡 **Tip:** Nếu build fail ở PowerShell, hãy mở **"x64 Native Tools Command Prompt"** từ Start Menu rồi chạy lại các lệnh trên.
 
 </details>
 
@@ -270,98 +286,84 @@ npx nodejs-whisper download
 
 1. **Chọn model**: Nhập `medium` → Enter
 
-   | Model | Dung lượng | RAM cần | Ghi chú |
+   | Model | Dung lượng | VRAM cần | Ghi chú |
    |---|---|---|---|
    | `tiny` | 75 MB | ~390 MB | Nhanh nhất, chất lượng thấp |
    | `base` | 142 MB | ~500 MB | Cơ bản |
    | `small` | 466 MB | ~1.0 GB | Ổn cho tiếng Việt |
-   | **`medium`** | **1.5 GB** | **~2.6 GB** | **⭐ Khuyến nghị** |
+   | **`medium`** | **1.5 GB** | **~2.6 GB** | **⭐ Khuyến nghị — chạy trên GPU** |
    | `large-v3-turbo` | 1.5 GB | ~2.6 GB | Chất lượng cao nhất |
 
-2. **CUDA?**: Nhập `y` (có NVIDIA GPU) hoặc `n` (CPU only)
+2. **CUDA?**: Nhập `y` (bắt buộc — GPU-only mode)
 
 **Quá trình sẽ:**
 - Tải model từ HuggingFace (~1.5GB cho medium)
-- Build whisper.cpp bằng CMake
+- Build whisper.cpp bằng CMake with CUDA
 - Tạo executable `whisper-cli` (Linux/macOS) hoặc `whisper-cli.exe` (Windows)
 
 ---
 
-## 1.4. CUDA Support (GPU Acceleration)
+## 1.4. CUDA Setup (BẮT BUỘC — GPU-only Mode)
 
-### 🐧 Linux
-
-**Yêu cầu:**
-| Thành phần | Version |
-|---|---|
-| NVIDIA Driver | 535+ |
-| CUDA Toolkit (`nvcc`) | 12.x |
-| GCC | 11 hoặc 12 |
-
-**Kiểm tra:**
-```bash
-nvidia-smi            # Xem driver + max CUDA version
-nvcc --version        # Xem CUDA Toolkit đã cài
-```
-
-**Cài CUDA Toolkit 12.x (nếu đang dùng 11.x):**
-```bash
-wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
-sudo dpkg -i cuda-keyring_1.1-1_all.deb
-sudo apt update
-sudo apt install cuda-toolkit-12-6 -y
-
-# Thêm vào ~/.bashrc
-echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc
-echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
-source ~/.bashrc
-```
-
-> ⚠️ **Lưu ý quan trọng:** CUDA Toolkit 11.5 + GCC 11 sẽ gây lỗi build (`parameter packs not expanded`). Phải upgrade CUDA Toolkit lên 12.x.
+> ⚠️ **QUAN TRỌNG:** CUDA là bắt buộc cho tất cả AI engines. Không có CPU fallback.
 
 ### 🪟 Windows
 
 **Yêu cầu:**
 | Thành phần | Version |
 |---|---|
-| NVIDIA Driver | 535+ (tải từ [nvidia.com](https://www.nvidia.com/drivers)) |
-| CUDA Toolkit | 12.x |
-| Visual Studio Build Tools | 2022 |
+| NVIDIA Driver | 560+ (tải từ [nvidia.com](https://www.nvidia.com/drivers)) |
+| CUDA Toolkit | **12.8+** (bắt buộc cho RTX 50 series) |
+| Visual Studio Build Tools | 2022 hoặc 2026 |
 
-**Cài CUDA Toolkit:**
+**Cài CUDA Toolkit 12.8:**
 
 1. Tải từ [developer.nvidia.com/cuda-downloads](https://developer.nvidia.com/cuda-downloads)
-   - OS: Windows
-   - Architecture: x86_64
-   - Version: 10 hoặc 11
-   - Installer Type: exe (network)
+   - OS: Windows → Architecture: x86_64 → Installer Type: exe (network)
 2. Chạy installer → chọn **Express Installation**
 3. Restart máy
-4. Verify:
-   ```powershell
-   nvcc --version
-   # Cuda compilation tools, release 12.x
-   
-   nvidia-smi
-   # Hiển thị GPU info
-   ```
+4. **Copy CUDA MSBuild extensions vào Visual Studio** (bắt buộc):
 
-**Build whisper.cpp với CUDA trên Windows:**
 ```powershell
-# Mở "x64 Native Tools Command Prompt for VS 2022"
-# KHÔNG dùng PowerShell hoặc CMD thường
+# Chạy PowerShell as Administrator
+# Tìm đường dẫn BuildCustomizations
+Get-ChildItem -Recurse "C:\Program Files (x86)\Microsoft Visual Studio" -Filter "BuildCustomizations" -Directory -Depth 6 | Select-Object FullName
 
-cd path\to\bankAI
-npx nodejs-whisper download
-# Chọn model: medium
-# CUDA: y
+# Copy CUDA extensions (thay path VS cho đúng)
+Start-Process cmd -Verb RunAs -ArgumentList '/c', 'copy /Y "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\extras\visual_studio_integration\MSBuildExtensions\*.*" "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\MSBuild\Microsoft\VC\v180\BuildCustomizations\"' -Wait
 ```
 
-> 💡 **Tip:** Nếu build fail trên PowerShell, hãy mở **"x64 Native Tools Command Prompt for VS 2022"** từ Start Menu → chạy lại lệnh.
+5. Verify:
+```powershell
+nvcc --version
+# Cuda compilation tools, release 12.8, V12.8.61
 
-### 🍎 macOS
+nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader
+# NVIDIA GeForce RTX 5070, 12.0
+```
 
-macOS không hỗ trợ CUDA. Whisper.cpp sẽ dùng **Metal GPU acceleration** tự động trên Apple Silicon (M1/M2/M3).
+**Build whisper.cpp với CUDA (RTX 50 series):**
+```powershell
+cd node_modules\nodejs-whisper\cpp\whisper.cpp
+Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
+cmake.exe -B build -DGGML_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES=120 -DCMAKE_CUDA_FLAGS="--allow-unsupported-compiler"
+cmake.exe --build build --config Release -j 11
+```
+
+**Build node-llama-cpp với CUDA:**
+```powershell
+$env:CMAKE_CUDA_ARCHITECTURES="120"
+$env:CUDAFLAGS="--allow-unsupported-compiler"
+npx --no node-llama-cpp source build --gpu cuda
+```
+
+> 💡 **CUDA Architecture Reference:**
+> | GPU Series | Compute Capability | Architecture Flag |
+> |---|---|---|
+> | RTX 30xx | 8.6 | `-DCMAKE_CUDA_ARCHITECTURES=86` |
+> | RTX 40xx | 8.9 | `-DCMAKE_CUDA_ARCHITECTURES=89` |
+> | RTX 50xx | 12.0 | `-DCMAKE_CUDA_ARCHITECTURES=120` |
+> Kiểm tra GPU: `nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader`
 
 ---
 
@@ -581,8 +583,8 @@ Tự động — `node-llama-cpp` tải model GGUF khi khởi động lần đ�
 |---|---|
 | Model | Qwen3 4B (GGUF Q4_K_M) |
 | Kích thước | ~2.5 GB |
-| RAM cần | ~4 GB |
-| Tốc độ | ~10-30 tok/s (CPU) |
+| VRAM cần | ~4 GB |
+| Tốc độ | ~30-80 tok/s (CUDA GPU) |
 
 ---
 
@@ -748,14 +750,16 @@ App tự detect OS qua:
 
 | # | Bước | Thời gian | Bắt buộc? |
 |---|---|---|---|
-| 1 | Cài Node.js 18+ | 2 phút | ✅ |
-| 2 | Cài build tools (gcc/cmake hoặc VS Build Tools) | 5 phút | ✅ |
-| 3 | `npm install` | 2 phút | ✅ |
-| 4 | `npx nodejs-whisper download` (model + build) | 3-10 phút | ✅ |
-| 5 | Cài CUDA Toolkit 12.x (optional, cho GPU) | 5-10 phút | ❌ Tùy chọn |
-| 6 | Cài Python 3.12 | 2 phút | Cho TTS |
-| 7 | Cài đặt Python env (thủ công) | 10-30 phút | Cho TTS |
-| 8 | Clone F5-TTS + tải model | 10-15 phút | Cho TTS |
+| 1 | Cài Node.js 22+ | 2 phút | ✅ |
+| 2 | Cài build tools (VS Build Tools + CMake) | 5 phút | ✅ |
+| 3 | Cài CUDA Toolkit 12.8+ | 5-10 phút | ✅ **Bắt buộc** |
+| 4 | Copy CUDA MSBuild extensions vào VS | 1 phút | ✅ **Bắt buộc** |
+| 5 | `npm install` | 2 phút | ✅ |
+| 6 | Build whisper.cpp với CUDA | 3-10 phút | ✅ |
+| 7 | Build node-llama-cpp với CUDA | 5-15 phút | ✅ |
+| 8 | Cài Python 3.11+ | 2 phút | Cho TTS |
+| 9 | Cài đặt Python env (thủ công) | 10-30 phút | Cho TTS |
+| 10 | Clone F5-TTS + tải model | 10-15 phút | Cho TTS |
 
 ---
 
@@ -763,14 +767,17 @@ App tự detect OS qua:
 
 | OS | Version | Trạng thái |
 |---|---|---|
-| Ubuntu | 22.04 LTS | ✅ Tested |
-| Windows | 10/11 | 🔧 Supported |
-| macOS | 12+ (Monterey) | 🔧 Supported |
+| Windows | 10/11 (22H2) | ✅ Tested |
 
 | Runtime | Version |
 |---|---|
-| Node.js | v20+ |
-| Python | 3.12.12 |
-| CUDA Toolkit | 12.6 |
-| NVIDIA Driver | 580.126.09 |
-| GCC | 9.5 / 11.4 |
+| Node.js | v22.22.0 |
+| Python | 3.11 (Conda) |
+| CUDA Toolkit | **12.8** (V12.8.61) |
+| NVIDIA Driver | 572.x+ |
+| GPU | NVIDIA GeForce RTX 5070 (sm_120) |
+| VS Build Tools | 2026 (v18, MSVC 19.50) |
+| PyTorch | 2.8.0+cu128 |
+
+> ⚠️ **VS 2026 + CUDA 12.8:** Cần flag `--allow-unsupported-compiler` khi build.
+> CUDA 12.8 officially chỉ support VS 2017–2022.

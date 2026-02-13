@@ -110,20 +110,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getPlatform: () => ipcRenderer.invoke("python:get-platform"),
   },
 
-  // Hardware Acceleration
+  // Hardware Acceleration (GPU-only mode)
   hardware: {
     getInfo: () => ipcRenderer.invoke("hardware:get-info"),
     getGpuMode: () => ipcRenderer.invoke("hardware:get-gpu-mode"),
-    setGpuMode: (mode) => ipcRenderer.invoke("hardware:set-gpu-mode", mode),
-    rebuildLlama: (gpuFlag) =>
-      ipcRenderer.invoke("hardware:rebuild-llama", gpuFlag),
+    setGpuMode: () => ipcRenderer.invoke("hardware:set-gpu-mode"),
+    rebuildLlama: () => ipcRenderer.invoke("hardware:rebuild-llama"),
     resetLlm: () => ipcRenderer.invoke("hardware:reset-llm"),
-    setWhisperGpuMode: (mode) =>
-      ipcRenderer.invoke("hardware:set-whisper-gpu-mode", mode),
-    setTtsGpuMode: (mode) =>
-      ipcRenderer.invoke("hardware:set-tts-gpu-mode", mode),
-    rebuildWhisper: (gpuMode) =>
-      ipcRenderer.invoke("hardware:rebuild-whisper", gpuMode),
+    setWhisperGpuMode: () =>
+      ipcRenderer.invoke("hardware:set-whisper-gpu-mode"),
+    setTtsGpuMode: () =>
+      ipcRenderer.invoke("hardware:set-tts-gpu-mode"),
+    rebuildWhisper: () =>
+      ipcRenderer.invoke("hardware:rebuild-whisper"),
   },
 
   // Preload

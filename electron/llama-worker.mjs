@@ -59,37 +59,16 @@ async function init({ gpuMode = "auto", modelsDir, modelUri }) {
     send({ type: "status", status: "loading" });
     console.log(`[llama-worker] Initializing (gpuMode=${gpuMode})...`);
 
-    // Load llama.cpp backend based on GPU preference
-    if (gpuMode === "cuda") {
+    // GPU-only mode: use CUDA build (no CPU fallback)
+    try {
+      llamaInstance = await getLlama("lastBuild");
+      console.log("[llama-worker] Backend: lastBuild (CUDA)");
+    } catch {
       try {
         llamaInstance = await getLlama({ gpu: "cuda" });
-        console.log("[llama-worker] Backend: CUDA");
+        console.log("[llama-worker] Backend: CUDA (explicit)");
       } catch (cudaErr) {
-        console.warn("[llama-worker] CUDA init failed, falling back:", cudaErr.message);
-        try {
-          llamaInstance = await getLlama("lastBuild");
-          console.log("[llama-worker] Backend: lastBuild (CUDA fallback)");
-        } catch {
-          llamaInstance = await getLlama();
-          console.log("[llama-worker] Backend: auto (CUDA fallback)");
-        }
-      }
-    } else if (gpuMode === "auto") {
-      try {
-        llamaInstance = await getLlama("lastBuild");
-        console.log("[llama-worker] Backend: lastBuild");
-      } catch {
-        llamaInstance = await getLlama();
-        console.log("[llama-worker] Backend: auto");
-      }
-    } else {
-      // CPU mode
-      try {
-        llamaInstance = await getLlama("lastBuild");
-        console.log("[llama-worker] Backend: lastBuild (CPU)");
-      } catch {
-        llamaInstance = await getLlama({ gpu: false });
-        console.log("[llama-worker] Backend: CPU fallback");
+        throw new Error(`CUDA initialization failed: ${cudaErr.message}`);
       }
     }
 
@@ -102,8 +81,14 @@ async function init({ gpuMode = "auto", modelsDir, modelUri }) {
     llamaModel = await llamaInstance.loadModel({ modelPath });
     console.log("[llama-worker] Model loaded");
 
-    // Create context and session
-    llamaContext = await llamaModel.createContext();
+    // Create context with minimal resource usage
+    // 16000 tokens is enough for banking Q&A (default 32K wastes VRAM)
+    llamaContext = await llamaModel.createContext({
+      contextSize: 16000,
+      flashAttention: true,
+    });
+    console.log(`[llama-worker] Context created (size=16000, flashAttn=true)`);
+
     llamaSession = new LlamaChatSession({
       contextSequence: llamaContext.getSequence(),
     });
@@ -122,7 +107,11 @@ async function handlePrompt({ id, text, temperature = 0.3, topP = 0.9 }) {
       send({ type: "error", id, error: "Model not loaded" });
       return;
     }
-    const response = await llamaSession.prompt(text, { temperature, topP });
+    const response = await llamaSession.prompt(text, {
+      temperature,
+      topP,
+      maxTokens: 2048,  // Limit response length — banking answers are short
+    });
     send({ type: "response", id, text: response.trim() });
   } catch (error) {
     console.error("[llama-worker] Prompt error:", error.message);
