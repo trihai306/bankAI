@@ -13,8 +13,6 @@ Cài đặt:
 import os
 import sys
 import json
-import time
-import shutil
 import argparse
 import subprocess
 import platform
@@ -33,53 +31,18 @@ IS_WINDOWS = platform.system() == "Windows"
 VENV_BIN = SCRIPT_DIR / "venv" / ("Scripts" if IS_WINDOWS else "bin")
 
 
-def check_gpu():
-    """Kiểm tra GPU/CUDA availability - F5-TTS chỉ hỗ trợ GPU"""
-    try:
-        import torch
-        cuda_available = torch.cuda.is_available()
-        gpu_name = torch.cuda.get_device_name(0) if cuda_available else None
-        gpu_count = torch.cuda.device_count() if cuda_available else 0
-        return {
-            "cuda_available": cuda_available,
-            "gpu_name": gpu_name,
-            "gpu_count": gpu_count,
-            "torch_version": torch.__version__,
-            "cuda_version": torch.version.cuda if cuda_available else None,
-        }
-    except ImportError:
-        return {
-            "cuda_available": False,
-            "gpu_name": None,
-            "gpu_count": 0,
-            "torch_version": None,
-            "cuda_version": None,
-            "error": "PyTorch not installed"
-        }
-    except Exception as e:
-        return {
-            "cuda_available": False,
-            "gpu_name": None,
-            "gpu_count": 0,
-            "error": str(e)
-        }
-
-
 def check_installation():
     """Kiểm tra F5-TTS đã cài đặt chưa"""
     cli_name = "f5-tts_infer-cli.exe" if IS_WINDOWS else "f5-tts_infer-cli"
     venv_cli = VENV_BIN / cli_name
     cli_available = venv_cli.exists()
-    gpu_info = check_gpu()
     
     return {
         "model_exists": CKPT_FILE.exists(),
         "vocab_exists": VOCAB_FILE.exists(),
         "cli_available": cli_available,
         "model_dir": str(MODEL_DIR),
-        "gpu": gpu_info,
-        "gpu_only": True,
-        "ready": CKPT_FILE.exists() and VOCAB_FILE.exists() and cli_available and gpu_info["cuda_available"]
+        "ready": CKPT_FILE.exists() and VOCAB_FILE.exists() and cli_available
     }
 
 
@@ -118,19 +81,13 @@ def generate(ref_audio: str, ref_text: str, gen_text: str, output: str = None, s
     # Kiểm tra model
     status = check_installation()
     if not status["ready"]:
-        if not status.get("gpu", {}).get("cuda_available", False):
-            print(json.dumps({
-                "error": "F5-TTS yêu cầu NVIDIA GPU với CUDA. Không phát hiện GPU khả dụng.",
-                "gpu_required": True,
-                "status": status
-            }))
-        else:
-            print(json.dumps({"error": "F5-TTS chưa được cài đặt", "status": status}))
+        print(json.dumps({"error": "F5-TTS chưa được cài đặt", "status": status}))
         sys.exit(1)
     
     # Tạo output path
     OUTPUT_DIR.mkdir(exist_ok=True)
     if output is None:
+        import time
         output = str(OUTPUT_DIR / f"generated_{int(time.time() * 1000)}.wav")
     
     output_dir = Path(output).parent
@@ -152,17 +109,10 @@ def generate(ref_audio: str, ref_text: str, gen_text: str, output: str = None, s
     ]
     
     # Log command for debugging
+    import sys
     print(f"DEBUG: Running command: {' '.join(cmd)}", file=sys.stderr)
     
-    # Force UTF-8 encoding and GPU mode for subprocess
-    env = os.environ.copy()
-    env["PYTHONUTF8"] = "1"
-    env["PYTHONIOENCODING"] = "utf-8"
-    # Ensure GPU is used (CUDA device 0)
-    if "CUDA_VISIBLE_DEVICES" not in env or env["CUDA_VISIBLE_DEVICES"] == "":
-        env["CUDA_VISIBLE_DEVICES"] = "0"
-    
-    result = subprocess.run(cmd, capture_output=True, text=True, env=env, encoding="utf-8", errors="replace")
+    result = subprocess.run(cmd, capture_output=True, text=True)
     
     # Log subprocess output for debugging
     print(f"DEBUG: Return code: {result.returncode}", file=sys.stderr)
@@ -177,6 +127,7 @@ def generate(ref_audio: str, ref_text: str, gen_text: str, output: str = None, s
         sys.exit(1)
     
     # Tìm file output mới nhất
+    import shutil
     output_files = sorted(output_dir.glob("*.wav"), key=lambda f: f.stat().st_mtime, reverse=True)
     if output_files:
         latest = output_files[0]

@@ -1,8 +1,10 @@
-# Core ML
-# torch 2.5.1 is the last version where torchaudio supports soundfile backend natively.
+# Core ML — CUDA 12.8 (RTX 5070 / Blackwell sm_120 compatible)
+# torch/torchaudio 2.8.x is the latest version with native soundfile backend.
 # torchaudio 2.9+ requires torchcodec which has DLL issues on Windows.
-torch==2.5.1
-torchaudio==2.5.1
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch>=2.8.0,<2.9.0
+torchaudio>=2.8.0,<2.9.0
+torchvision>=0.23.0,<0.24.0
 
 # F5-TTS dependencies (installed separately via pip install -e)
 # These are common deps that F5-TTS needs

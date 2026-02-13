@@ -433,8 +433,6 @@ function runPython(args) {
   return new Promise((resolve, reject) => {
     const { python: venvPython } = getPythonPaths();
     const env = { ...process.env };
-    // F5-TTS requires GPU (CUDA) - ensure CUDA is always visible
-    // Do NOT set CUDA_VISIBLE_DEVICES="" as CPU mode is no longer supported
     env.PYTHONUTF8 = "1";
     env.PYTHONIOENCODING = "utf-8";
     const python = spawn(venvPython, [PYTHON_SCRIPT, ...args], {
