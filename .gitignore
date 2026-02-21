@@ -38,4 +38,6 @@ python/ref_audio/*.wav
 # .agent/
 
 src/f5_tts/
-release/
+release/*
+!release/install.bat
+!release/uninstall.bat
