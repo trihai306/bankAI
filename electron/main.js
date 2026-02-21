@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { createRequire } from "module";
+import { getModelsDir, getPythonDir, getLlamaWorkerPath, getProjectRoot } from "./paths.js";
 
 const require = createRequire(import.meta.url);
 const { nodewhisper } = require("nodejs-whisper");
@@ -27,7 +28,7 @@ const __dirname = path.dirname(__filename);
 
 // Cross-platform Python path helpers
 const isWindows = process.platform === "win32";
-const PYTHON_DIR = path.join(__dirname, "..", "python");
+const PYTHON_DIR = getPythonDir();
 
 function getPythonPaths() {
   const venvDir = path.join(PYTHON_DIR, "venv");
@@ -442,9 +443,9 @@ ipcMain.handle("model:train", async (event, config) => {
 
 // TTS - F5-TTS Vietnamese via Python CLI
 
-const PYTHON_SCRIPT = path.join(__dirname, "..", "python", "f5_tts.py");
-const TTS_OUTPUT_DIR = path.join(__dirname, "..", "python", "outputs");
-const REF_AUDIO_DIR = path.join(__dirname, "..", "python", "ref_audio");
+const PYTHON_SCRIPT = path.join(PYTHON_DIR, "f5_tts.py");
+const TTS_OUTPUT_DIR = path.join(PYTHON_DIR, "outputs");
+const REF_AUDIO_DIR = path.join(PYTHON_DIR, "ref_audio");
 
 // Ensure directories exist
 [TTS_OUTPUT_DIR, REF_AUDIO_DIR].forEach((dir) => {
@@ -845,9 +846,9 @@ let modelLoadingPromise = null;
 let pendingPrompts = new Map(); // id -> { resolve, reject }
 let promptIdCounter = 0;
 
-const MODELS_DIR = path.join(__dirname, "..", "models");
+const MODELS_DIR = getModelsDir();
 const MODEL_URI = "hf:Qwen/Qwen3-4B-GGUF:Q4_K_M";
-const LLAMA_WORKER_PATH = path.join(__dirname, "llama-worker.mjs");
+const LLAMA_WORKER_PATH = getLlamaWorkerPath();
 
 // Ensure models directory exists
 if (!fs.existsSync(MODELS_DIR)) {
@@ -935,10 +936,10 @@ async function initQwenModel() {
       // Fork the worker using the system Node.js (not Electron)
       llamaWorker = fork(LLAMA_WORKER_PATH, [], {
         execPath: nodeBin,
-        cwd: path.join(__dirname, ".."),
+        cwd: getProjectRoot(),
         env: {
           ...process.env,
-          PROJECT_ROOT: path.join(__dirname, ".."),
+          PROJECT_ROOT: getProjectRoot(),
         },
         stdio: ["pipe", "pipe", "pipe", "ipc"],
       });

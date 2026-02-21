@@ -13,10 +13,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import http from "http";
+import { getPythonDir } from "./paths.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const PROJECT_ROOT = path.join(__dirname, "..");
 
 const TTS_SERVER_PORT = 8179;
 const TTS_SERVER_HOST = "127.0.0.1";
@@ -35,7 +35,7 @@ class TTSServerManager {
      * Get Python paths for TTS server
      */
     _getPaths() {
-        const pythonDir = path.join(PROJECT_ROOT, "python");
+        const pythonDir = getPythonDir();
         const isWindows = process.platform === "win32";
         const venvDir = path.join(pythonDir, "venv");
 

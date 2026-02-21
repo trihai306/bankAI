@@ -1,8 +1,8 @@
 {
-  "name": "ai-voice-bot",
+  "name": "bank-ai-auto",
   "private": true,
   "version": "1.0.0",
-  "description": "AI Voice Bot - Hệ thống Bot AI Trả lời Cuộc gọi Tự động",
+  "description": "Bank AI Auto - Hệ thống Bot AI Trả lời Cuộc gọi Tự động",
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
@@ -42,34 +42,64 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "png-to-ico": "^3.0.1",
     "postcss": "^8.5.6",
+    "sharp": "^0.34.5",
     "tailwindcss": "^3.4.19",
     "vite": "^7.2.4",
     "wait-on": "^9.0.3"
   },
   "build": {
-    "appId": "com.aibank.voice-bot",
-    "productName": "AI Voice Bot",
+    "appId": "com.bankai.auto",
+    "productName": "Bank AI Auto",
+    "asar": false,
     "directories": {
       "buildResources": "build",
       "output": "release"
     },
     "files": [
       "dist/**/*",
-      "electron/**/*"
+      "electron/**/*",
+      "node_modules/**/*"
     ],
-    "mac": {
-      "category": "public.app-category.utilities",
-      "target": [
-        "dmg",
-        "zip"
-      ]
-    },
+    "extraResources": [
+      {
+        "from": "models/",
+        "to": "models/",
+        "filter": [
+          "**/*.gguf"
+        ]
+      },
+      {
+        "from": "python/",
+        "to": "python/",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/outputs/**",
+          "!**/*.pyc",
+          "!**/*.pdb",
+          "!**/gradio/media_assets/**",
+          "!**/gradio/templates/**",
+          "!**/gradio/node/**",
+          "!**/share/doc/**",
+          "!**/share/man/**"
+        ]
+      },
+      {
+        "from": "node_modules/nodejs-whisper/cpp/whisper.cpp/",
+        "to": "whisper/",
+        "filter": [
+          "build/bin/**",
+          "models/ggml-*.bin"
+        ]
+      }
+    ],
     "win": {
       "target": [
-        "nsis",
-        "portable"
-      ]
+        "dir"
+      ],
+      "icon": "build/icon.ico"
     }
   }
 }

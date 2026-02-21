@@ -14,10 +14,10 @@ import { fileURLToPath } from "url";
 import fs from "fs";
 import http from "http";
 import os from "os";
+import { getWhisperDir } from "./paths.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const PROJECT_ROOT = path.join(__dirname, "..");
 
 const WHISPER_SERVER_PORT = 8178; // Uncommon port to avoid conflicts
 const WHISPER_SERVER_HOST = "127.0.0.1";
@@ -37,23 +37,17 @@ class WhisperServerManager {
      * Get the paths for whisper-server executable and model
      */
     _getPaths() {
-        const nodejsWhisperDir = path.join(
-            PROJECT_ROOT,
-            "node_modules",
-            "nodejs-whisper",
-            "cpp",
-            "whisper.cpp",
-        );
+        const whisperDir = getWhisperDir();
 
         const isWindows = process.platform === "win32";
         const execName = isWindows ? "whisper-server.exe" : "whisper-server";
 
         // Check common build locations
         const possibleExecPaths = [
-            path.join(nodejsWhisperDir, "build", "bin", "Release", execName),
-            path.join(nodejsWhisperDir, "build", "bin", execName),
-            path.join(nodejsWhisperDir, "build", execName),
-            path.join(nodejsWhisperDir, execName),
+            path.join(whisperDir, "build", "bin", "Release", execName),
+            path.join(whisperDir, "build", "bin", execName),
+            path.join(whisperDir, "build", execName),
+            path.join(whisperDir, execName),
         ];
 
         let execPath = "";
@@ -65,12 +59,12 @@ class WhisperServerManager {
         }
 
         const modelPath = path.join(
-            nodejsWhisperDir,
+            whisperDir,
             "models",
             `ggml-${this.modelName}.bin`,
         );
 
-        return { execPath, modelPath, whisperDir: nodejsWhisperDir };
+        return { execPath, modelPath, whisperDir };
     }
 
     /**
