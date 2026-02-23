@@ -119,6 +119,27 @@ async function handlePrompt({ id, text, temperature = 0.3, topP = 0.9 }) {
   }
 }
 
+async function handlePromptStream({ id, text, temperature = 0.3, topP = 0.9 }) {
+  try {
+    if (!llamaSession) {
+      send({ type: "error", id, error: "Model not loaded" });
+      return;
+    }
+    const response = await llamaSession.prompt(text, {
+      temperature,
+      topP,
+      maxTokens: 2048,
+      onTextChunk(chunk) {
+        send({ type: "token", id, text: chunk });
+      },
+    });
+    send({ type: "stream-end", id, text: response.trim() });
+  } catch (error) {
+    console.error("[llama-worker] Prompt stream error:", error.message);
+    send({ type: "error", id, error: error.message });
+  }
+}
+
 async function dispose() {
   try {
     llamaSession = null;
@@ -147,6 +168,9 @@ process.on("message", async (msg) => {
       break;
     case "prompt":
       await handlePrompt(msg);
+      break;
+    case "prompt-stream":
+      await handlePromptStream(msg);
       break;
     case "dispose":
       await dispose();

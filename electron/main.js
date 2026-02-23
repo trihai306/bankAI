@@ -1055,6 +1055,21 @@ async function initQwenModel() {
             }
             break;
           }
+          case "token": {
+            const pendingToken = pendingPrompts.get(msg.id);
+            if (pendingToken?.onToken) {
+              pendingToken.onToken(msg.text);
+            }
+            break;
+          }
+          case "stream-end": {
+            const pendingStream = pendingPrompts.get(msg.id);
+            if (pendingStream) {
+              pendingPrompts.delete(msg.id);
+              pendingStream.resolve(msg.text);
+            }
+            break;
+          }
           case "error": {
             const pendingErr = pendingPrompts.get(msg.id);
             if (pendingErr) {
@@ -1146,6 +1161,39 @@ function workerPrompt(text, temperature = 0.3, topP = 0.9) {
     });
 
     llamaWorker.send({ type: "prompt", id, text, temperature, topP });
+  });
+}
+
+// Send prompt to worker with streaming tokens via callback
+function workerPromptStream(text, onToken, temperature = 0.3, topP = 0.9) {
+  return new Promise((resolve, reject) => {
+    if (!llamaWorker || modelStatus !== "ready") {
+      reject(new Error("Model not ready"));
+      return;
+    }
+    const id = ++promptIdCounter;
+
+    // Timeout after 2 minutes
+    const timeout = setTimeout(() => {
+      if (pendingPrompts.has(id)) {
+        pendingPrompts.delete(id);
+        reject(new Error("Prompt timed out"));
+      }
+    }, 120000);
+
+    pendingPrompts.set(id, {
+      resolve: (val) => {
+        clearTimeout(timeout);
+        resolve(val);
+      },
+      reject: (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      },
+      onToken,
+    });
+
+    llamaWorker.send({ type: "prompt-stream", id, text, temperature, topP });
   });
 }
 
@@ -1535,6 +1583,7 @@ function getVoiceEngine() {
     voiceEngine = new VoiceConversationEngine({
       nodewhisper: whisperTranscribe,
       workerPrompt,
+      workerPromptStream,
       initQwenModel,
       runPython,
       ttsServer,
@@ -1569,6 +1618,7 @@ ipcMain.handle("voice-chat:status", async () => {
 });
 
 ipcMain.handle("voice-chat:process", async (event, audioData, filename) => {
+  console.log("\n[IPC] voice-chat:process (NON-STREAM) called");
   try {
     const engine = getVoiceEngine();
     const result = await engine.processAudioChunk(audioData, filename);
@@ -1586,7 +1636,57 @@ ipcMain.handle("voice-chat:process", async (event, audioData, filename) => {
   }
 });
 
-ipcMain.handle("voice-chat:pick-audio", async () => {
+ipcMain.handle("voice-chat:process-stream", async (event, audioData, filename) => {
+  console.log("\n[IPC] 🚀 voice-chat:process-stream (STREAMING) called");
+  try {
+    const engine = getVoiceEngine();
+    const sender = event.sender;
+
+    const onEvent = (evt) => {
+      if (sender.isDestroyed()) return;
+
+      switch (evt.type) {
+        case "stt-done":
+          sender.send("voice-stream:stt-done", { transcript: evt.transcript });
+          break;
+        case "llm-chunk":
+          sender.send("voice-stream:llm-chunk", { text: evt.text, fullText: evt.fullText });
+          break;
+        case "tts-audio": {
+          // Read audio file and send as buffer
+          if (evt.audioPath && fs.existsSync(evt.audioPath)) {
+            const audioBuf = fs.readFileSync(evt.audioPath);
+            sender.send("voice-stream:tts-audio", {
+              audioData: Array.from(audioBuf),
+              chunkIndex: evt.chunkIndex,
+              mimeType: "audio/wav",
+            });
+          }
+          break;
+        }
+        case "done":
+          sender.send("voice-stream:done", {
+            timings: evt.timings,
+            responseText: evt.responseText,
+            chunkCount: evt.chunkCount,
+          });
+          break;
+        case "tts-chunk-failed":
+          sender.send("voice-stream:tts-chunk-failed", {
+            chunkIndex: evt.chunkIndex,
+          });
+          break;
+      }
+    };
+
+    const result = await engine.processAudioChunkStream(audioData, filename, onEvent);
+    return result;
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("voice-chat:pick-audio", async (event) => {
   try {
     const { canceled, filePaths } = await dialog.showOpenDialog({
       title: "Chọn file âm thanh",
@@ -1644,20 +1744,51 @@ ipcMain.handle("voice-chat:pick-audio", async () => {
       });
     }
 
-    // Read WAV and process through voice engine
+    // Read WAV and process through voice engine (streaming)
     const audioBuffer = fs.readFileSync(wavPath);
     const audioData = Array.from(new Uint8Array(audioBuffer));
-    const result = await engine.processAudioChunk(
+    const sender = event.sender;
+
+    const onEvent = (evt) => {
+      if (sender.isDestroyed()) return;
+      switch (evt.type) {
+        case "stt-done":
+          sender.send("voice-stream:stt-done", { transcript: evt.transcript });
+          break;
+        case "llm-chunk":
+          sender.send("voice-stream:llm-chunk", { text: evt.text, fullText: evt.fullText });
+          break;
+        case "tts-audio": {
+          if (evt.audioPath && fs.existsSync(evt.audioPath)) {
+            const audioBuf = fs.readFileSync(evt.audioPath);
+            sender.send("voice-stream:tts-audio", {
+              audioData: Array.from(audioBuf),
+              chunkIndex: evt.chunkIndex,
+              mimeType: "audio/wav",
+            });
+          }
+          break;
+        }
+        case "done":
+          sender.send("voice-stream:done", {
+            timings: evt.timings,
+            responseText: evt.responseText,
+            chunkCount: evt.chunkCount,
+          });
+          break;
+        case "tts-chunk-failed":
+          sender.send("voice-stream:tts-chunk-failed", {
+            chunkIndex: evt.chunkIndex,
+          });
+          break;
+      }
+    };
+
+    const result = await engine.processAudioChunkStream(
       audioData,
       path.basename(wavPath),
+      onEvent,
     );
-
-    // If TTS generated audio, read it and send back as buffer
-    if (result.success && result.audioPath && fs.existsSync(result.audioPath)) {
-      const ttsBuffer = fs.readFileSync(result.audioPath);
-      result.audioData = Array.from(ttsBuffer);
-      result.audioMimeType = "audio/wav";
-    }
 
     // Cleanup converted temp file
     if (wavPath !== filePath) {
@@ -1675,7 +1806,7 @@ ipcMain.handle("voice-chat:pick-audio", async () => {
   }
 });
 
-ipcMain.handle("voice-chat:process-ref-file", async (_, filename) => {
+ipcMain.handle("voice-chat:process-ref-file", async (event, filename) => {
   try {
     if (!filename) {
       return { success: false, error: "No filename provided" };
@@ -1731,20 +1862,51 @@ ipcMain.handle("voice-chat:process-ref-file", async (_, filename) => {
       });
     }
 
-    // Read WAV and process through voice engine
+    // Read WAV and process through voice engine (streaming)
     const audioBuffer = fs.readFileSync(wavPath);
     const audioData = Array.from(new Uint8Array(audioBuffer));
-    const result = await engine.processAudioChunk(
+    const sender = event.sender;
+
+    const onEvent = (evt) => {
+      if (sender.isDestroyed()) return;
+      switch (evt.type) {
+        case "stt-done":
+          sender.send("voice-stream:stt-done", { transcript: evt.transcript });
+          break;
+        case "llm-chunk":
+          sender.send("voice-stream:llm-chunk", { text: evt.text, fullText: evt.fullText });
+          break;
+        case "tts-audio": {
+          if (evt.audioPath && fs.existsSync(evt.audioPath)) {
+            const audioBuf = fs.readFileSync(evt.audioPath);
+            sender.send("voice-stream:tts-audio", {
+              audioData: Array.from(audioBuf),
+              chunkIndex: evt.chunkIndex,
+              mimeType: "audio/wav",
+            });
+          }
+          break;
+        }
+        case "done":
+          sender.send("voice-stream:done", {
+            timings: evt.timings,
+            responseText: evt.responseText,
+            chunkCount: evt.chunkCount,
+          });
+          break;
+        case "tts-chunk-failed":
+          sender.send("voice-stream:tts-chunk-failed", {
+            chunkIndex: evt.chunkIndex,
+          });
+          break;
+      }
+    };
+
+    const result = await engine.processAudioChunkStream(
       audioData,
       path.basename(wavPath),
+      onEvent,
     );
-
-    // If TTS generated audio, read it and send back as buffer
-    if (result.success && result.audioPath && fs.existsSync(result.audioPath)) {
-      const ttsBuffer = fs.readFileSync(result.audioPath);
-      result.audioData = Array.from(ttsBuffer);
-      result.audioMimeType = "audio/wav";
-    }
 
     // Cleanup converted temp file
     if (wavPath !== filePath) {

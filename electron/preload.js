@@ -91,11 +91,38 @@ contextBridge.exposeInMainWorld("electronAPI", {
     stop: () => ipcRenderer.invoke("voice-chat:stop"),
     process: (audioData, filename) =>
       ipcRenderer.invoke("voice-chat:process", audioData, filename),
+    processStream: (audioData, filename) =>
+      ipcRenderer.invoke("voice-chat:process-stream", audioData, filename),
     pickAndProcess: () => ipcRenderer.invoke("voice-chat:pick-audio"),
     status: () => ipcRenderer.invoke("voice-chat:status"),
     listRefAudios: () => ipcRenderer.invoke("tts:list-refs"),
     processRefFile: (filename) =>
       ipcRenderer.invoke("voice-chat:process-ref-file", filename),
+    // Stream event listeners
+    onStreamEvent: (callbacks) => {
+      if (callbacks.onSttDone) {
+        ipcRenderer.on("voice-stream:stt-done", (_, data) => callbacks.onSttDone(data));
+      }
+      if (callbacks.onLlmChunk) {
+        ipcRenderer.on("voice-stream:llm-chunk", (_, data) => callbacks.onLlmChunk(data));
+      }
+      if (callbacks.onTtsAudio) {
+        ipcRenderer.on("voice-stream:tts-audio", (_, data) => callbacks.onTtsAudio(data));
+      }
+      if (callbacks.onTtsChunkFailed) {
+        ipcRenderer.on("voice-stream:tts-chunk-failed", (_, data) => callbacks.onTtsChunkFailed(data));
+      }
+      if (callbacks.onDone) {
+        ipcRenderer.on("voice-stream:done", (_, data) => callbacks.onDone(data));
+      }
+    },
+    removeStreamListeners: () => {
+      ipcRenderer.removeAllListeners("voice-stream:stt-done");
+      ipcRenderer.removeAllListeners("voice-stream:llm-chunk");
+      ipcRenderer.removeAllListeners("voice-stream:tts-audio");
+      ipcRenderer.removeAllListeners("voice-stream:tts-chunk-failed");
+      ipcRenderer.removeAllListeners("voice-stream:done");
+    },
   },
 
   // Qwen3 - Local AI (node-llama-cpp)

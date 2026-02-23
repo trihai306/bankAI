@@ -35,7 +35,10 @@ export default function VoiceChat() {
     useEffect(() => {
         loadVoices()
         loadRefAudios()
-        return () => stopListening()
+        return () => {
+            stopListening()
+            window.electronAPI.voiceChat.removeStreamListeners()
+        }
     }, [])
 
     const loadRefAudios = async () => {
@@ -47,11 +50,135 @@ export default function VoiceChat() {
         }
     }
 
+    // Shared streaming handler setup for all voice processing paths
+    const createStreamHandler = () => {
+        const audioQueue = []   // sparse array: audioQueue[chunkIndex] = { audioData, mimeType } | 'skipped'
+        let nextPlayIndex = 0
+        let streamDone = false
+        let totalChunks = 0     // total expected chunks (set when done)
+        let playbackResolve = null
+        let isPlaying = false
+
+        const tryPlayNext = () => {
+            if (isPlaying) return  // already playing something
+
+            // Skip over failed/skipped chunks
+            while (nextPlayIndex < audioQueue.length && audioQueue[nextPlayIndex] === 'skipped') {
+                nextPlayIndex++
+            }
+
+            if (nextPlayIndex < audioQueue.length && audioQueue[nextPlayIndex] && audioQueue[nextPlayIndex] !== 'skipped') {
+                const { audioData, mimeType } = audioQueue[nextPlayIndex]
+                nextPlayIndex++
+                isPlaying = true
+
+                const uint8 = new Uint8Array(audioData)
+                const blob = new Blob([uint8], { type: mimeType })
+                const url = URL.createObjectURL(blob)
+
+                if (audioPlayerRef.current) {
+                    audioPlayerRef.current.pause()
+                }
+
+                const audio = new Audio(url)
+                audioPlayerRef.current = audio
+
+                const onFinish = () => {
+                    URL.revokeObjectURL(url)
+                    isPlaying = false
+                    tryPlayNext()
+                }
+
+                audio.onended = onFinish
+                audio.onerror = onFinish
+                audio.play().catch(onFinish)
+            } else if (streamDone && nextPlayIndex >= totalChunks) {
+                // All chunks played or skipped
+                if (playbackResolve) {
+                    playbackResolve()
+                    playbackResolve = null
+                }
+            }
+            // else: waiting for next chunk to arrive
+        }
+
+        const registerListeners = () => {
+            window.electronAPI.voiceChat.onStreamEvent({
+                onSttDone: (data) => {
+                    setMessages(prev => [
+                        ...prev,
+                        { role: 'user', content: data.transcript, timestamp: Date.now() },
+                    ])
+                    setPipelineStep('llm')
+                },
+                onLlmChunk: (data) => {
+                    setPipelineStep('tts')
+                    setMessages(prev => {
+                        const last = prev[prev.length - 1]
+                        if (last?.role === 'assistant' && last?._streaming) {
+                            return [
+                                ...prev.slice(0, -1),
+                                { ...last, content: data.fullText },
+                            ]
+                        }
+                        return [
+                            ...prev,
+                            { role: 'assistant', content: data.text, timestamp: Date.now(), _streaming: true },
+                        ]
+                    })
+                },
+                onTtsAudio: (data) => {
+                    setPipelineStep('playing')
+                    audioQueue[data.chunkIndex] = {
+                        audioData: data.audioData,
+                        mimeType: data.mimeType || 'audio/wav',
+                    }
+                    tryPlayNext()
+                },
+                onTtsChunkFailed: (data) => {
+                    // Mark as skipped so playback doesn't wait forever
+                    audioQueue[data.chunkIndex] = 'skipped'
+                    tryPlayNext()
+                },
+                onDone: (data) => {
+                    streamDone = true
+                    totalChunks = data.chunkCount || audioQueue.length
+                    setMessages(prev => {
+                        const last = prev[prev.length - 1]
+                        if (last?.role === 'assistant' && last?._streaming) {
+                            const { _streaming, ...clean } = last
+                            return [
+                                ...prev.slice(0, -1),
+                                { ...clean, content: data.responseText },
+                            ]
+                        }
+                        return prev
+                    })
+                    tryPlayNext()
+                },
+            })
+        }
+
+        const waitForPlayback = () => {
+            return new Promise(resolve => {
+                playbackResolve = resolve
+                // Check if already done (no audio chunks at all, or all played)
+                if (streamDone && (totalChunks === 0 || nextPlayIndex >= totalChunks)) {
+                    resolve()
+                }
+            })
+        }
+
+        return { registerListeners, waitForPlayback }
+    }
+
     const processRefAudio = async (filename) => {
         if (isProcessingRef.current) return
         setError(null)
         isProcessingRef.current = true
         setIsProcessing(true)
+
+        const { registerListeners, waitForPlayback } = createStreamHandler()
 
         try {
             if (!isListening) {
@@ -61,40 +188,28 @@ export default function VoiceChat() {
             }
 
             setPipelineStep('stt')
+            registerListeners()
+
             const result = await window.electronAPI.voiceChat.processRefFile(filename)
 
-            if (result.success) {
-                setPipelineStep('llm')
-                setMessages(prev => [
-                    ...prev,
-                    { role: 'user', content: result.transcript, timestamp: Date.now() },
-                ])
+            await waitForPlayback()
 
-                setPipelineStep('tts')
-                setMessages(prev => [
-                    ...prev,
-                    { role: 'assistant', content: result.responseText, timestamp: Date.now() },
-                ])
-
-                if (result.audioData) {
-                    setPipelineStep('playing')
-                    await playAudioData(result.audioData, result.audioMimeType || 'audio/wav')
-                }
-
-                setPipelineStep('done')
-            } else if (result.error !== 'No speech detected') {
+            if (!result.success && result.error !== 'No speech detected') {
                 setError(result.error)
             }
+
+            setPipelineStep('done')
         } catch (err) {
             console.error('Ref audio processing error:', err)
             setError(`Processing failed: ${err.message}`)
         } finally {
+            window.electronAPI.voiceChat.removeStreamListeners()
             isProcessingRef.current = false
             setIsProcessing(false)
             setPipelineStep(null)
 
             if (!isListening) {
-                try { await window.electronAPI.voiceChat.stop() } catch {}
+                try { await window.electronAPI.voiceChat.stop() } catch { }
             }
         }
     }
@@ -210,13 +325,13 @@ export default function VoiceChat() {
 
         // Stop MediaRecorder
         if (mediaRecorderRef.current?.state !== 'inactive') {
-            try { mediaRecorderRef.current?.stop() } catch {}
+            try { mediaRecorderRef.current?.stop() } catch { }
         }
         mediaRecorderRef.current = null
 
         // Stop audio context
         if (audioContextRef.current?.state !== 'closed') {
-            try { await audioContextRef.current?.close() } catch {}
+            try { await audioContextRef.current?.close() } catch { }
         }
         audioContextRef.current = null
         analyserRef.current = null
@@ -235,7 +350,7 @@ export default function VoiceChat() {
         // Stop voice engine session
         try {
             await window.electronAPI.voiceChat.stop()
-        } catch {}
+        } catch { }
     }
 
     const monitorVolume = useCallback(() => {
@@ -296,6 +411,8 @@ export default function VoiceChat() {
         chunksRef.current = []
         silenceStartRef.current = null
 
+        const { registerListeners, waitForPlayback } = createStreamHandler()
+
         try {
             // Convert WebM chunks to a single blob
             const blob = new Blob(audioChunks, { type: 'audio/webm' })
@@ -306,41 +423,28 @@ export default function VoiceChat() {
             const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer)
             const wavData = encodeWav(audioBuffer)
 
-            // Send to backend pipeline
             setPipelineStep('stt')
-            const result = await window.electronAPI.voiceChat.process(
+            registerListeners()
+
+            // Start streaming pipeline (returns when entire pipeline finishes)
+            const result = await window.electronAPI.voiceChat.processStream(
                 Array.from(new Uint8Array(wavData)),
                 `voice_${Date.now()}.wav`
             )
 
-            if (result.success) {
-                setPipelineStep('llm')
-                // Transcript arrived (STT done), LLM response is in result
-                setMessages(prev => [
-                    ...prev,
-                    { role: 'user', content: result.transcript, timestamp: Date.now() },
-                ])
+            await waitForPlayback()
 
-                setPipelineStep('tts')
-                setMessages(prev => [
-                    ...prev,
-                    { role: 'assistant', content: result.responseText, timestamp: Date.now() },
-                ])
-
-                // Play TTS audio if available
-                if (result.audioData) {
-                    setPipelineStep('playing')
-                    await playAudioData(result.audioData, result.audioMimeType || 'audio/wav')
-                }
-
-                setPipelineStep('done')
-            } else if (result.error !== 'No speech detected') {
+            if (!result.success && result.error !== 'No speech detected') {
                 setError(result.error)
             }
+
+            setPipelineStep('done')
         } catch (err) {
             console.error('Processing error:', err)
             setError(`Processing failed: ${err.message}`)
         } finally {
+            // Cleanup stream listeners
+            window.electronAPI.voiceChat.removeStreamListeners()
             isProcessingRef.current = false
             setIsProcessing(false)
             setPipelineStep(null)
@@ -420,6 +524,8 @@ export default function VoiceChat() {
         isProcessingRef.current = true
         setIsProcessing(true)
 
+        const { registerListeners, waitForPlayback } = createStreamHandler()
+
         try {
             // Start voice engine if not active
             if (!isListening) {
@@ -429,46 +535,33 @@ export default function VoiceChat() {
             }
 
             setPipelineStep('stt')
+            registerListeners()
+
             const result = await window.electronAPI.voiceChat.pickAndProcess()
 
             if (result.error === 'cancelled') {
-                // User cancelled file dialog
                 return
             }
 
-            if (result.success) {
-                setPipelineStep('llm')
-                setMessages(prev => [
-                    ...prev,
-                    { role: 'user', content: result.transcript, timestamp: Date.now() },
-                ])
+            await waitForPlayback()
 
-                setPipelineStep('tts')
-                setMessages(prev => [
-                    ...prev,
-                    { role: 'assistant', content: result.responseText, timestamp: Date.now() },
-                ])
-
-                if (result.audioData) {
-                    setPipelineStep('playing')
-                    await playAudioData(result.audioData, result.audioMimeType || 'audio/wav')
-                }
-
-                setPipelineStep('done')
-            } else if (result.error !== 'No speech detected') {
+            if (!result.success && result.error !== 'No speech detected') {
                 setError(result.error)
             }
+
+            setPipelineStep('done')
         } catch (err) {
             console.error('Pick audio error:', err)
             setError(`Processing failed: ${err.message}`)
         } finally {
+            window.electronAPI.voiceChat.removeStreamListeners()
             isProcessingRef.current = false
             setIsProcessing(false)
             setPipelineStep(null)
 
             // Stop engine if we started it just for this file
             if (!isListening) {
-                try { await window.electronAPI.voiceChat.stop() } catch {}
+                try { await window.electronAPI.voiceChat.stop() } catch { }
             }
         }
     }
@@ -521,13 +614,12 @@ export default function VoiceChat() {
                                     {idx > 0 && (
                                         <div className={`w-8 h-px ${isDone ? 'bg-cyan-500' : 'bg-white/10'}`} />
                                     )}
-                                    <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
-                                        isActive
-                                            ? 'bg-cyan-500/20 text-cyan-400 animate-pulse'
-                                            : isDone
-                                                ? 'bg-emerald-500/10 text-emerald-400'
-                                                : 'bg-white/5 text-slate-500'
-                                    }`}>
+                                    <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${isActive
+                                        ? 'bg-cyan-500/20 text-cyan-400 animate-pulse'
+                                        : isDone
+                                            ? 'bg-emerald-500/10 text-emerald-400'
+                                            : 'bg-white/5 text-slate-500'
+                                        }`}>
                                         <span>{step.icon}</span>
                                         <span>{step.label}</span>
                                         {isDone && <Check className="w-3 h-3" />}
@@ -585,11 +677,11 @@ export default function VoiceChat() {
                         )}
                         <div
                             className={`max-w-2xl rounded-2xl p-4 ${msg.role === 'user'
-                                    ? 'bg-cyan-500 text-white'
-                                    : 'bg-white/[0.03] border border-white/10 text-slate-200'
+                                ? 'bg-cyan-500 text-white'
+                                : 'bg-white/[0.03] border border-white/10 text-slate-200'
                                 }`}
                         >
-                            <p className="whitespace-pre-wrap">{msg.content}</p>
+                            <div className="whitespace-pre-wrap m-0 leading-relaxed">{msg.content?.trimStart()}</div>
                         </div>
                         {msg.role === 'user' && (
                             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center flex-shrink-0">
@@ -683,11 +775,10 @@ export default function VoiceChat() {
                     <button
                         onClick={isListening ? stopListening : startListening}
                         disabled={isProcessing}
-                        className={`relative w-16 h-16 rounded-full flex items-center justify-center transition-all duration-300 disabled:opacity-50 ${
-                            isListening
-                                ? 'bg-rose-500 hover:bg-rose-600 shadow-lg shadow-rose-500/30'
-                                : 'bg-gradient-to-br from-cyan-500 to-teal-600 hover:from-cyan-400 hover:to-teal-500 shadow-lg shadow-cyan-500/30'
-                        }`}
+                        className={`relative w-16 h-16 rounded-full flex items-center justify-center transition-all duration-300 disabled:opacity-50 ${isListening
+                            ? 'bg-rose-500 hover:bg-rose-600 shadow-lg shadow-rose-500/30'
+                            : 'bg-gradient-to-br from-cyan-500 to-teal-600 hover:from-cyan-400 hover:to-teal-500 shadow-lg shadow-cyan-500/30'
+                            }`}
                     >
                         {isListening && (
                             <span className="absolute inset-0 rounded-full bg-rose-500/30 animate-ping" style={{ animationDuration: '1.5s' }} />
@@ -704,11 +795,10 @@ export default function VoiceChat() {
                         onClick={() => setShowRefPanel(v => !v)}
                         disabled={isProcessing}
                         title="Chọn audio từ thư mục ref_audio"
-                        className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 disabled:opacity-50 border ${
-                            showRefPanel
-                                ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
-                                : 'bg-white/[0.06] border-white/10 hover:bg-white/[0.1] hover:border-cyan-500/30 text-slate-400 hover:text-cyan-400'
-                        }`}
+                        className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 disabled:opacity-50 border ${showRefPanel
+                            ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
+                            : 'bg-white/[0.06] border-white/10 hover:bg-white/[0.1] hover:border-cyan-500/30 text-slate-400 hover:text-cyan-400'
+                            }`}
                     >
                         <FolderOpen className="w-5 h-5" />
                     </button>
