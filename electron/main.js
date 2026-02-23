@@ -547,6 +547,89 @@ ipcMain.handle("tts:upload-ref", async (event, { audioData, filename }) => {
   }
 });
 
+// Pick voice file from system (wav/mp3), copy to ref_audio, auto-convert to wav
+ipcMain.handle("tts:pick-voice-file", async () => {
+  try {
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "Chọn file giọng nói",
+      filters: [
+        { name: "Audio Files", extensions: ["wav", "mp3"] },
+      ],
+      properties: ["openFile"],
+    });
+
+    if (result.canceled || !result.filePaths.length) {
+      return { success: false, canceled: true };
+    }
+
+    const sourcePath = result.filePaths[0];
+    const ext = path.extname(sourcePath).toLowerCase();
+    const baseName = path.basename(sourcePath, ext);
+    const safeBaseName = baseName.replace(/[^a-zA-Z0-9_\-]/g, "_");
+    const destFilename = `${safeBaseName}_${Date.now()}${ext}`;
+    const destPath = path.join(REF_AUDIO_DIR, destFilename);
+
+    // Copy file to ref_audio directory
+    fs.copyFileSync(sourcePath, destPath);
+    console.log(`[VoiceFile] Copied ${sourcePath} -> ${destPath}`);
+
+    let finalPath = destPath;
+
+    // Auto-convert non-wav to wav using ffmpeg
+    if (ext !== ".wav") {
+      const wavFilename = `${safeBaseName}_${Date.now()}.wav`;
+      const wavPath = path.join(REF_AUDIO_DIR, wavFilename);
+
+      console.log(`[VoiceFile] Converting ${ext} to WAV...`);
+
+      try {
+        await new Promise((resolve, reject) => {
+          const ffmpeg = spawn("ffmpeg", [
+            "-i", destPath,
+            "-ar", "24000",
+            "-ac", "1",
+            "-sample_fmt", "s16",
+            "-y",
+            wavPath,
+          ]);
+
+          let stderr = "";
+          ffmpeg.stderr.on("data", (data) => { stderr += data.toString(); });
+
+          ffmpeg.on("close", (code) => {
+            if (code === 0) {
+              // Delete the original non-wav file
+              try { fs.unlinkSync(destPath); } catch { }
+              console.log(`[VoiceFile] Converted successfully: ${wavPath}`);
+              resolve();
+            } else {
+              reject(new Error(`ffmpeg exited with code ${code}: ${stderr}`));
+            }
+          });
+
+          ffmpeg.on("error", reject);
+        });
+
+        finalPath = wavPath;
+      } catch (convErr) {
+        console.warn("[VoiceFile] Conversion failed, keeping original:", convErr.message);
+        // Keep original file if conversion fails
+      }
+    }
+
+    return {
+      success: true,
+      path: finalPath,
+      filename: path.basename(finalPath),
+      originalName: path.basename(sourcePath),
+    };
+  } catch (error) {
+    console.error("[VoiceFile] Error:", error);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle("tts:generate", async (event, config) => {
   try {
     const { refAudio, refText, genText, speed = 1.0 } = config;
@@ -588,7 +671,7 @@ ipcMain.handle("tts:list-refs", () => {
     if (!fs.existsSync(REF_AUDIO_DIR)) return [];
     const files = fs
       .readdirSync(REF_AUDIO_DIR)
-      .filter((f) => f.endsWith(".wav") || f.endsWith(".webm"))
+      .filter((f) => f.endsWith(".wav") || f.endsWith(".mp3") || f.endsWith(".webm"))
       .map((f) => ({
         filename: f,
         path: path.join(REF_AUDIO_DIR, f),

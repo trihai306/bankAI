@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Mic, Play, Pause, Trash2, AudioLines, AlertCircle, Check, RefreshCw, Volume2, Zap, Plus, Save, TestTube, Edit3, X, FolderOpen, FileAudio } from 'lucide-react'
+import { Mic, Play, Pause, Trash2, AudioLines, AlertCircle, Check, RefreshCw, Volume2, Zap, Plus, Save, TestTube, Edit3, X, FolderOpen, FileAudio, Upload } from 'lucide-react'
 
 export default function VoiceCreate() {
     // Voice list state
@@ -19,6 +19,10 @@ export default function VoiceCreate() {
     const [selectedFile, setSelectedFile] = useState(null)
     const [loadingFiles, setLoadingFiles] = useState(false)
     const [saving, setSaving] = useState(false)
+
+    // Upload state
+    const [uploadedFile, setUploadedFile] = useState(null)
+    const [uploading, setUploading] = useState(false)
 
     // Recording state
     const [isRecording, setIsRecording] = useState(false)
@@ -55,6 +59,10 @@ export default function VoiceCreate() {
     const editMediaRecorderRef = useRef(null)
     const editAudioChunksRef = useRef([])
     const editTimerRef = useRef(null)
+
+    // Edit upload state
+    const [editUploadedFile, setEditUploadedFile] = useState(null)
+    const [editUploading, setEditUploading] = useState(false)
 
     useEffect(() => {
         loadVoices()
@@ -153,17 +161,58 @@ export default function VoiceCreate() {
         }
     }
 
+    // === Upload Voice File ===
+    const handleUploadFile = async () => {
+        setUploading(true)
+        try {
+            const result = await window.electronAPI.tts.pickVoiceFile()
+            if (result.canceled) { setUploading(false); return }
+            if (!result.success) throw new Error(result.error)
+            setUploadedFile({
+                path: result.path,
+                filename: result.filename,
+                originalName: result.originalName
+            })
+        } catch (e) {
+            console.error('Upload error:', e)
+            alert('Lỗi upload: ' + e.message)
+        } finally {
+            setUploading(false)
+        }
+    }
+
+    const handleEditUploadFile = async () => {
+        setEditUploading(true)
+        try {
+            const result = await window.electronAPI.tts.pickVoiceFile()
+            if (result.canceled) { setEditUploading(false); return }
+            if (!result.success) throw new Error(result.error)
+            setEditUploadedFile({
+                path: result.path,
+                filename: result.filename,
+                originalName: result.originalName
+            })
+        } catch (e) {
+            console.error('Edit upload error:', e)
+            alert('Lỗi upload: ' + e.message)
+        } finally {
+            setEditUploading(false)
+        }
+    }
+
     // === Auto Transcribe ===
     const autoTranscribe = async () => {
         if (audioSource === 'record' && !recordedBlob) return
         if (audioSource === 'file' && !selectedFile) return
+        if (audioSource === 'upload' && !uploadedFile) return
         setIsTranscribing(true)
         try {
             let audioPath
 
             if (audioSource === 'file' && selectedFile) {
-                // Use existing file directly
                 audioPath = selectedFile.path
+            } else if (audioSource === 'upload' && uploadedFile) {
+                audioPath = uploadedFile.path
             } else {
                 // Upload temp file for transcription
                 const arrayBuffer = await recordedBlob.arrayBuffer()
@@ -183,7 +232,7 @@ export default function VoiceCreate() {
                 try {
                     const qwen = await window.electronAPI.qwen.processText(result.text, 'correct')
                     if (qwen.success) finalText = qwen.text
-                } catch {}
+                } catch { }
                 setTranscript(finalText)
             } else {
                 alert('Lỗi nhận dạng: ' + result.error)
@@ -191,7 +240,7 @@ export default function VoiceCreate() {
 
             // Cleanup temp file only for recorded audio
             if (audioSource === 'record') {
-                try { await window.electronAPI.tts.deleteRef(audioPath) } catch {}
+                try { await window.electronAPI.tts.deleteRef(audioPath) } catch { }
             }
         } catch (e) {
             console.error('Transcribe error:', e)
@@ -206,16 +255,22 @@ export default function VoiceCreate() {
         if (!voiceName.trim()) return alert('Vui lòng nhập tên giọng')
         if (audioSource === 'record' && !recordedBlob) return alert('Vui lòng ghi âm giọng mẫu')
         if (audioSource === 'file' && !selectedFile) return alert('Vui lòng chọn file audio')
+        if (audioSource === 'upload' && !uploadedFile) return alert('Vui lòng upload file giọng nói')
 
         setSaving(true)
         try {
             let createPayload
 
             if (audioSource === 'file' && selectedFile) {
-                // Use existing file path directly
                 createPayload = {
                     name: voiceName.trim(),
                     filePath: selectedFile.path,
+                    transcript: transcript.trim()
+                }
+            } else if (audioSource === 'upload' && uploadedFile) {
+                createPayload = {
+                    name: voiceName.trim(),
+                    filePath: uploadedFile.path,
                     transcript: transcript.trim()
                 }
             } else {
@@ -240,6 +295,7 @@ export default function VoiceCreate() {
                 setRecordedUrl(null)
                 setRecordingTime(0)
                 setSelectedFile(null)
+                setUploadedFile(null)
                 setShowForm(false)
                 await loadVoices()
             } else {
@@ -323,6 +379,7 @@ export default function VoiceCreate() {
         setEditRecordedBlob(null)
         setEditRecordedUrl(null)
         setEditSelectedFile(null)
+        setEditUploadedFile(null)
         setEditRecordingTime(0)
         setEditRecording(false)
     }
@@ -370,12 +427,15 @@ export default function VoiceCreate() {
         const useFile = editAudioSource === 'file' && editSelectedFile
         const useRecord = editAudioSource === 'record' && editRecordedBlob
         const useKeep = editAudioSource === 'keep' && voice
-        if (!useFile && !useRecord && !useKeep) return
+        const useUpload = editAudioSource === 'upload' && editUploadedFile
+        if (!useFile && !useRecord && !useKeep && !useUpload) return
         setEditTranscribing(true)
         try {
             let audioPath
             if (useFile) {
                 audioPath = editSelectedFile.path
+            } else if (useUpload) {
+                audioPath = editUploadedFile.path
             } else if (useKeep) {
                 audioPath = voice.audio_path
             } else {
@@ -389,12 +449,12 @@ export default function VoiceCreate() {
             const result = await window.electronAPI.tts.transcribeAudio(audioPath)
             if (result.success) {
                 let finalText = result.text
-                try { const q = await window.electronAPI.qwen.processText(result.text, 'correct'); if (q.success) finalText = q.text } catch {}
+                try { const q = await window.electronAPI.qwen.processText(result.text, 'correct'); if (q.success) finalText = q.text } catch { }
                 setEditTranscript(finalText)
             } else {
                 alert('Lỗi nhận dạng: ' + result.error)
             }
-            if (useRecord) { try { await window.electronAPI.tts.deleteRef(audioPath) } catch {} }
+            if (useRecord) { try { await window.electronAPI.tts.deleteRef(audioPath) } catch { } }
         } catch (e) {
             alert('Lỗi: ' + e.message)
         } finally {
@@ -412,6 +472,8 @@ export default function VoiceCreate() {
             }
             if (editAudioSource === 'file' && editSelectedFile) {
                 updatePayload.filePath = editSelectedFile.path
+            } else if (editAudioSource === 'upload' && editUploadedFile) {
+                updatePayload.filePath = editUploadedFile.path
             } else if (editAudioSource === 'record' && editRecordedBlob) {
                 updatePayload.audioData = await editRecordedBlob.arrayBuffer()
                 updatePayload.filename = `voice_edit_${Date.now()}.webm`
@@ -501,7 +563,7 @@ export default function VoiceCreate() {
                 </div>
                 <div className="flex items-center gap-3">
                     <button
-                        onClick={() => { setShowForm(!showForm); setRecordedBlob(null); setRecordedUrl(null); setVoiceName(''); setTranscript(''); setRecordingTime(0); setSelectedFile(null); setAudioSource('record') }}
+                        onClick={() => { setShowForm(!showForm); setRecordedBlob(null); setRecordedUrl(null); setVoiceName(''); setTranscript(''); setRecordingTime(0); setSelectedFile(null); setUploadedFile(null); setAudioSource('record') }}
                         className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all text-sm ${showForm
                             ? 'bg-white/5 text-slate-400 hover:text-white border border-white/10'
                             : 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white hover:shadow-[0_0_30px_rgba(6,182,212,0.3)]'
@@ -545,25 +607,83 @@ export default function VoiceCreate() {
                         <div className="flex gap-2 mb-4">
                             <button
                                 onClick={() => setAudioSource('record')}
-                                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                                    audioSource === 'record'
-                                        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                                        : 'bg-white/5 text-slate-400 hover:text-white border border-white/10'
-                                }`}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${audioSource === 'record'
+                                    ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                                    : 'bg-white/5 text-slate-400 hover:text-white border border-white/10'
+                                    }`}
                             >
                                 <Mic className="w-4 h-4" /> Ghi âm
                             </button>
                             <button
+                                onClick={() => setAudioSource('upload')}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${audioSource === 'upload'
+                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                    : 'bg-white/5 text-slate-400 hover:text-white border border-white/10'
+                                    }`}
+                            >
+                                <Upload className="w-4 h-4" /> Upload file
+                            </button>
+                            <button
                                 onClick={() => { setAudioSource('file'); loadRefFiles() }}
-                                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                                    audioSource === 'file'
-                                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                                        : 'bg-white/5 text-slate-400 hover:text-white border border-white/10'
-                                }`}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${audioSource === 'file'
+                                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                    : 'bg-white/5 text-slate-400 hover:text-white border border-white/10'
+                                    }`}
                             >
                                 <FolderOpen className="w-4 h-4" /> Chọn từ ref_audio
                             </button>
                         </div>
+
+                        {/* Upload Mode */}
+                        {audioSource === 'upload' && (
+                            <div className="space-y-3">
+                                <button
+                                    onClick={handleUploadFile}
+                                    disabled={uploading}
+                                    className="flex items-center gap-3 w-full px-6 py-4 rounded-xl border-2 border-dashed border-emerald-500/30 bg-emerald-500/5 text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/50 transition-all text-sm font-medium disabled:opacity-50"
+                                >
+                                    {uploading ? (
+                                        <><RefreshCw className="w-5 h-5 animate-spin" /> Đang upload...</>
+                                    ) : (
+                                        <><Upload className="w-5 h-5" /> Chọn file từ máy tính (.wav, .mp3)</>
+                                    )}
+                                </button>
+                                <p className="text-[11px] text-slate-500">File .mp3 sẽ được tự động chuyển đổi sang .wav</p>
+
+                                {uploadedFile && (
+                                    <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                                        <FileAudio className="w-4 h-4 text-emerald-400 shrink-0" />
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-xs font-medium text-emerald-300 truncate">{uploadedFile.originalName}</p>
+                                            <p className="text-[10px] text-emerald-500/60 truncate">→ {uploadedFile.filename}</p>
+                                        </div>
+                                        <button
+                                            onClick={async () => {
+                                                try {
+                                                    const result = await window.electronAPI.tts.readAudio(uploadedFile.path)
+                                                    if (result.success) {
+                                                        const blob = new Blob([new Uint8Array(result.data)], { type: result.mimeType })
+                                                        const url = URL.createObjectURL(blob)
+                                                        const audio = new Audio(url)
+                                                        audio.onended = () => URL.revokeObjectURL(url)
+                                                        audio.play()
+                                                    }
+                                                } catch { }
+                                            }}
+                                            className="flex items-center gap-1 px-2 py-1 rounded-md bg-white/5 text-emerald-400 hover:text-white text-[11px] transition-all"
+                                        >
+                                            <Play className="w-3 h-3" /> Nghe
+                                        </button>
+                                        <button
+                                            onClick={() => setUploadedFile(null)}
+                                            className="p-1 rounded-md bg-white/5 text-slate-400 hover:text-rose-400 transition-all"
+                                        >
+                                            <X className="w-3 h-3" />
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         {/* Recording Mode */}
                         {audioSource === 'record' && (
@@ -638,11 +758,10 @@ export default function VoiceCreate() {
                                             <button
                                                 key={idx}
                                                 onClick={() => setSelectedFile(file)}
-                                                className={`flex items-center gap-3 px-4 py-3 rounded-xl text-left text-sm transition-all ${
-                                                    selectedFile?.path === file.path
-                                                        ? 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
-                                                        : 'bg-white/[0.02] border border-white/5 text-slate-400 hover:text-white hover:border-white/15'
-                                                }`}
+                                                className={`flex items-center gap-3 px-4 py-3 rounded-xl text-left text-sm transition-all ${selectedFile?.path === file.path
+                                                    ? 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
+                                                    : 'bg-white/[0.02] border border-white/5 text-slate-400 hover:text-white hover:border-white/15'
+                                                    }`}
                                             >
                                                 <FileAudio className="w-4 h-4 shrink-0" />
                                                 <span className="truncate">{file.filename}</span>
@@ -670,7 +789,7 @@ export default function VoiceCreate() {
                                                         audio.onended = () => URL.revokeObjectURL(url)
                                                         audio.play()
                                                     }
-                                                } catch {}
+                                                } catch { }
                                             }}
                                             className="flex items-center gap-1 px-2 py-1 ml-2 rounded-md bg-white/5 text-slate-400 hover:text-white text-[11px] transition-all"
                                         >
@@ -695,7 +814,7 @@ export default function VoiceCreate() {
                                 rows={3}
                                 className="flex-1 px-4 py-3 rounded-xl bg-[#0a0a12] border border-white/10 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-cyan-500/50 transition-colors resize-none"
                             />
-                            {(recordedBlob || selectedFile) && (
+                            {(recordedBlob || selectedFile || uploadedFile) && (
                                 <button
                                     onClick={autoTranscribe}
                                     disabled={isTranscribing}
@@ -715,7 +834,7 @@ export default function VoiceCreate() {
                     <div className="flex justify-end pt-2">
                         <button
                             onClick={saveVoice}
-                            disabled={saving || !voiceName.trim() || (audioSource === 'record' ? !recordedBlob : !selectedFile)}
+                            disabled={saving || !voiceName.trim() || (audioSource === 'record' ? !recordedBlob : audioSource === 'upload' ? !uploadedFile : !selectedFile)}
                             className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 text-white font-medium hover:shadow-[0_0_30px_rgba(16,185,129,0.3)] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                             {saving ? (
@@ -753,246 +872,302 @@ export default function VoiceCreate() {
                     </div>
                 ) : (
                     <>
-                    {/* Edit Panel (full-width, above grid) */}
-                    {editingId && (
-                        <div className="mb-4 rounded-2xl bg-white/[0.03] border border-amber-500/20 p-8 space-y-6">
-                            <div className="flex items-center justify-between">
-                                <h3 className="flex items-center gap-2 text-lg font-bold text-white">
-                                    <Edit3 className="w-5 h-5 text-amber-400" />
-                                    Chỉnh sửa giọng đọc
-                                    <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 text-[10px] font-medium border border-amber-500/20">
-                                        {voices.find(v => v.id === editingId)?.name}
-                                    </span>
-                                </h3>
-                                <button onClick={cancelEdit} className="p-2 rounded-lg bg-white/5 text-slate-400 hover:text-white transition-all">
-                                    <X className="w-4 h-4" />
-                                </button>
-                            </div>
-
-                            {/* Name */}
-                            <div>
-                                <label className="block mb-2 text-sm font-medium text-slate-400">Tên giọng <span className="text-rose-400">*</span></label>
-                                <input
-                                    type="text"
-                                    value={editName}
-                                    onChange={(e) => setEditName(e.target.value)}
-                                    className="w-full px-4 py-3 rounded-xl bg-[#0a0a12] border border-white/10 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-500/50 transition-colors"
-                                />
-                            </div>
-
-                            {/* Audio Source Tabs */}
-                            <div>
-                                <label className="block mb-3 text-sm font-medium text-slate-400">Audio mẫu</label>
-                                <div className="flex gap-2 mb-4">
-                                    <button
-                                        onClick={() => setEditAudioSource('keep')}
-                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                                            editAudioSource === 'keep'
-                                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                                : 'bg-white/5 text-slate-400 hover:text-white border border-white/10'
-                                        }`}
-                                    >
-                                        <Check className="w-4 h-4" /> Giữ nguyên
-                                    </button>
-                                    <button
-                                        onClick={() => setEditAudioSource('record')}
-                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                                            editAudioSource === 'record'
-                                                ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                                                : 'bg-white/5 text-slate-400 hover:text-white border border-white/10'
-                                        }`}
-                                    >
-                                        <Mic className="w-4 h-4" /> Ghi âm mới
-                                    </button>
-                                    <button
-                                        onClick={() => { setEditAudioSource('file'); loadRefFiles() }}
-                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                                            editAudioSource === 'file'
-                                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                                                : 'bg-white/5 text-slate-400 hover:text-white border border-white/10'
-                                        }`}
-                                    >
-                                        <FolderOpen className="w-4 h-4" /> Chọn từ ref_audio
+                        {/* Edit Panel (full-width, above grid) */}
+                        {editingId && (
+                            <div className="mb-4 rounded-2xl bg-white/[0.03] border border-amber-500/20 p-8 space-y-6">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="flex items-center gap-2 text-lg font-bold text-white">
+                                        <Edit3 className="w-5 h-5 text-amber-400" />
+                                        Chỉnh sửa giọng đọc
+                                        <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 text-[10px] font-medium border border-amber-500/20">
+                                            {voices.find(v => v.id === editingId)?.name}
+                                        </span>
+                                    </h3>
+                                    <button onClick={cancelEdit} className="p-2 rounded-lg bg-white/5 text-slate-400 hover:text-white transition-all">
+                                        <X className="w-4 h-4" />
                                     </button>
                                 </div>
 
-                                {/* Keep current */}
-                                {editAudioSource === 'keep' && (() => {
-                                    const voice = voices.find(v => v.id === editingId)
-                                    return voice ? (
-                                        <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/[0.02] border border-white/5">
-                                            <FileAudio className="w-4 h-4 text-slate-500" />
-                                            <span className="text-sm text-slate-400 truncate">{voice.audio_path?.split('/').pop() || 'Audio hiện tại'}</span>
-                                            <button
-                                                onClick={() => playVoice(voice)}
-                                                className="flex items-center gap-1 px-2 py-1 ml-auto rounded-md bg-white/5 text-slate-400 hover:text-white text-[11px] transition-all"
-                                            >
-                                                {playingId === voice.id ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                                                {playingId === voice.id ? 'Dừng' : 'Nghe'}
-                                            </button>
-                                        </div>
-                                    ) : null
-                                })()}
+                                {/* Name */}
+                                <div>
+                                    <label className="block mb-2 text-sm font-medium text-slate-400">Tên giọng <span className="text-rose-400">*</span></label>
+                                    <input
+                                        type="text"
+                                        value={editName}
+                                        onChange={(e) => setEditName(e.target.value)}
+                                        className="w-full px-4 py-3 rounded-xl bg-[#0a0a12] border border-white/10 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-500/50 transition-colors"
+                                    />
+                                </div>
 
-                                {/* Record new */}
-                                {editAudioSource === 'record' && (
-                                    <div className="flex items-center gap-6">
+                                {/* Audio Source Tabs */}
+                                <div>
+                                    <label className="block mb-3 text-sm font-medium text-slate-400">Audio mẫu</label>
+                                    <div className="flex gap-2 mb-4">
                                         <button
-                                            onClick={() => editRecording ? stopEditRecording() : startEditRecording()}
-                                            className={`relative w-16 h-16 rounded-full flex items-center justify-center transition-all shrink-0 ${editRecording
-                                                ? 'bg-rose-500 shadow-[0_0_24px_rgba(239,68,68,0.4)] hover:bg-rose-600'
-                                                : 'bg-gradient-to-br from-cyan-500 to-blue-600 hover:shadow-[0_0_20px_rgba(6,182,212,0.3)]'
-                                            }`}
+                                            onClick={() => setEditAudioSource('keep')}
+                                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${editAudioSource === 'keep'
+                                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                                : 'bg-white/5 text-slate-400 hover:text-white border border-white/10'
+                                                }`}
                                         >
-                                            {editRecording ? <div className="w-5 h-5 bg-white rounded-sm" /> : <Mic className="w-6 h-6 text-white" />}
-                                            {editRecording && <div className="absolute border-4 rounded-full pointer-events-none -inset-2 border-rose-500/30 animate-ping" />}
+                                            <Check className="w-4 h-4" /> Giữ nguyên
                                         </button>
-                                        <div className="flex-1 space-y-1">
-                                            <p className="font-mono text-xl font-bold text-white">{formatTime(editRecordingTime)}</p>
-                                            <p className="text-xs text-slate-400">
-                                                {editRecording ? '🎙️ Đang thu âm...' : editRecordedBlob ? '✅ Đã ghi âm xong' : 'Nhấn nút để ghi âm'}
-                                            </p>
-                                            {editRecording && (
-                                                <div className="flex items-center h-6 gap-0.5">
-                                                    {[...Array(16)].map((_, i) => (
-                                                        <div key={i} className="w-1 rounded-full bg-cyan-500 animate-pulse" style={{ height: `${10 + Math.sin(i * 0.6) * 8}px`, animationDuration: `${0.6 + (i % 4) * 0.15}s`, animationDelay: `${i * 25}ms` }} />
+                                        <button
+                                            onClick={() => setEditAudioSource('record')}
+                                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${editAudioSource === 'record'
+                                                ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                                                : 'bg-white/5 text-slate-400 hover:text-white border border-white/10'
+                                                }`}
+                                        >
+                                            <Mic className="w-4 h-4" /> Ghi âm mới
+                                        </button>
+                                        <button
+                                            onClick={() => setEditAudioSource('upload')}
+                                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${editAudioSource === 'upload'
+                                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                                : 'bg-white/5 text-slate-400 hover:text-white border border-white/10'
+                                                }`}
+                                        >
+                                            <Upload className="w-4 h-4" /> Upload file
+                                        </button>
+                                        <button
+                                            onClick={() => { setEditAudioSource('file'); loadRefFiles() }}
+                                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${editAudioSource === 'file'
+                                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                                : 'bg-white/5 text-slate-400 hover:text-white border border-white/10'
+                                                }`}
+                                        >
+                                            <FolderOpen className="w-4 h-4" /> Chọn từ ref_audio
+                                        </button>
+                                    </div>
+
+                                    {/* Upload mode */}
+                                    {editAudioSource === 'upload' && (
+                                        <div className="space-y-3">
+                                            <button
+                                                onClick={handleEditUploadFile}
+                                                disabled={editUploading}
+                                                className="flex items-center gap-3 w-full px-6 py-4 rounded-xl border-2 border-dashed border-emerald-500/30 bg-emerald-500/5 text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/50 transition-all text-sm font-medium disabled:opacity-50"
+                                            >
+                                                {editUploading ? (
+                                                    <><RefreshCw className="w-5 h-5 animate-spin" /> Đang upload...</>
+                                                ) : (
+                                                    <><Upload className="w-5 h-5" /> Chọn file từ máy tính (.wav, .mp3)</>
+                                                )}
+                                            </button>
+                                            <p className="text-[11px] text-slate-500">File .mp3 sẽ được tự động chuyển đổi sang .wav</p>
+
+                                            {editUploadedFile && (
+                                                <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                                                    <FileAudio className="w-4 h-4 text-emerald-400 shrink-0" />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-xs font-medium text-emerald-300 truncate">{editUploadedFile.originalName}</p>
+                                                        <p className="text-[10px] text-emerald-500/60 truncate">→ {editUploadedFile.filename}</p>
+                                                    </div>
+                                                    <button
+                                                        onClick={async () => {
+                                                            try {
+                                                                const r = await window.electronAPI.tts.readAudio(editUploadedFile.path)
+                                                                if (r.success) {
+                                                                    const blob = new Blob([new Uint8Array(r.data)], { type: r.mimeType })
+                                                                    const url = URL.createObjectURL(blob)
+                                                                    const a = new Audio(url)
+                                                                    a.onended = () => URL.revokeObjectURL(url)
+                                                                    a.play()
+                                                                }
+                                                            } catch { }
+                                                        }}
+                                                        className="flex items-center gap-1 px-2 py-1 rounded-md bg-white/5 text-emerald-400 hover:text-white text-[11px] transition-all"
+                                                    >
+                                                        <Play className="w-3 h-3" /> Nghe
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setEditUploadedFile(null)}
+                                                        className="p-1 rounded-md bg-white/5 text-slate-400 hover:text-rose-400 transition-all"
+                                                    >
+                                                        <X className="w-3 h-3" />
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* Keep current */}
+                                    {editAudioSource === 'keep' && (() => {
+                                        const voice = voices.find(v => v.id === editingId)
+                                        return voice ? (
+                                            <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/[0.02] border border-white/5">
+                                                <FileAudio className="w-4 h-4 text-slate-500" />
+                                                <span className="text-sm text-slate-400 truncate">{voice.audio_path?.split('/').pop() || 'Audio hiện tại'}</span>
+                                                <button
+                                                    onClick={() => playVoice(voice)}
+                                                    className="flex items-center gap-1 px-2 py-1 ml-auto rounded-md bg-white/5 text-slate-400 hover:text-white text-[11px] transition-all"
+                                                >
+                                                    {playingId === voice.id ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                                                    {playingId === voice.id ? 'Dừng' : 'Nghe'}
+                                                </button>
+                                            </div>
+                                        ) : null
+                                    })()}
+
+                                    {/* Record new */}
+                                    {editAudioSource === 'record' && (
+                                        <div className="flex items-center gap-6">
+                                            <button
+                                                onClick={() => editRecording ? stopEditRecording() : startEditRecording()}
+                                                className={`relative w-16 h-16 rounded-full flex items-center justify-center transition-all shrink-0 ${editRecording
+                                                    ? 'bg-rose-500 shadow-[0_0_24px_rgba(239,68,68,0.4)] hover:bg-rose-600'
+                                                    : 'bg-gradient-to-br from-cyan-500 to-blue-600 hover:shadow-[0_0_20px_rgba(6,182,212,0.3)]'
+                                                    }`}
+                                            >
+                                                {editRecording ? <div className="w-5 h-5 bg-white rounded-sm" /> : <Mic className="w-6 h-6 text-white" />}
+                                                {editRecording && <div className="absolute border-4 rounded-full pointer-events-none -inset-2 border-rose-500/30 animate-ping" />}
+                                            </button>
+                                            <div className="flex-1 space-y-1">
+                                                <p className="font-mono text-xl font-bold text-white">{formatTime(editRecordingTime)}</p>
+                                                <p className="text-xs text-slate-400">
+                                                    {editRecording ? '🎙️ Đang thu âm...' : editRecordedBlob ? '✅ Đã ghi âm xong' : 'Nhấn nút để ghi âm'}
+                                                </p>
+                                                {editRecording && (
+                                                    <div className="flex items-center h-6 gap-0.5">
+                                                        {[...Array(16)].map((_, i) => (
+                                                            <div key={i} className="w-1 rounded-full bg-cyan-500 animate-pulse" style={{ height: `${10 + Math.sin(i * 0.6) * 8}px`, animationDuration: `${0.6 + (i % 4) * 0.15}s`, animationDelay: `${i * 25}ms` }} />
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                {editRecordedBlob && !editRecording && (
+                                                    <button
+                                                        onClick={() => {
+                                                            if (!editRecordedUrl) return
+                                                            const audio = new Audio(editRecordedUrl)
+                                                            audio.play()
+                                                        }}
+                                                        className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white text-xs transition-all"
+                                                    >
+                                                        <Play className="w-3 h-3" /> Nghe thử
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* File picker */}
+                                    {editAudioSource === 'file' && (
+                                        <div className="space-y-3">
+                                            {loadingFiles ? (
+                                                <div className="flex items-center gap-2 py-4 text-sm text-slate-400">
+                                                    <RefreshCw className="w-4 h-4 animate-spin" /> Đang tải danh sách file...
+                                                </div>
+                                            ) : refFiles.length === 0 ? (
+                                                <div className="py-6 text-center rounded-xl bg-white/[0.02] border border-white/5">
+                                                    <FileAudio className="w-8 h-8 mx-auto mb-2 text-slate-600" />
+                                                    <p className="text-sm text-slate-500">Không có file nào trong thư mục ref_audio</p>
+                                                </div>
+                                            ) : (
+                                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 max-h-48 overflow-y-auto pr-1">
+                                                    {refFiles.map((file, idx) => (
+                                                        <button
+                                                            key={idx}
+                                                            onClick={() => setEditSelectedFile(file)}
+                                                            className={`flex items-center gap-3 px-4 py-3 rounded-xl text-left text-sm transition-all ${editSelectedFile?.path === file.path
+                                                                ? 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
+                                                                : 'bg-white/[0.02] border border-white/5 text-slate-400 hover:text-white hover:border-white/15'
+                                                                }`}
+                                                        >
+                                                            <FileAudio className="w-4 h-4 shrink-0" />
+                                                            <span className="truncate">{file.filename}</span>
+                                                            {editSelectedFile?.path === file.path && <Check className="w-4 h-4 ml-auto text-amber-400 shrink-0" />}
+                                                        </button>
                                                     ))}
                                                 </div>
                                             )}
-                                            {editRecordedBlob && !editRecording && (
-                                                <button
-                                                    onClick={() => {
-                                                        if (!editRecordedUrl) return
-                                                        const audio = new Audio(editRecordedUrl)
-                                                        audio.play()
-                                                    }}
-                                                    className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white text-xs transition-all"
-                                                >
-                                                    <Play className="w-3 h-3" /> Nghe thử
-                                                </button>
+                                            {editSelectedFile && (
+                                                <div className="flex items-center gap-2 pt-1">
+                                                    <span className="text-xs text-slate-500">Đã chọn:</span>
+                                                    <span className="text-xs font-medium text-amber-400">{editSelectedFile.filename}</span>
+                                                    <button
+                                                        onClick={async () => {
+                                                            try {
+                                                                const r = await window.electronAPI.tts.readAudio(editSelectedFile.path)
+                                                                if (r.success) {
+                                                                    const blob = new Blob([new Uint8Array(r.data)], { type: r.mimeType })
+                                                                    const url = URL.createObjectURL(blob)
+                                                                    const a = new Audio(url)
+                                                                    a.onended = () => URL.revokeObjectURL(url)
+                                                                    a.play()
+                                                                }
+                                                            } catch { }
+                                                        }}
+                                                        className="flex items-center gap-1 px-2 py-1 ml-2 rounded-md bg-white/5 text-slate-400 hover:text-white text-[11px] transition-all"
+                                                    >
+                                                        <Play className="w-3 h-3" /> Nghe
+                                                    </button>
+                                                </div>
                                             )}
                                         </div>
-                                    </div>
-                                )}
+                                    )}
+                                </div>
 
-                                {/* File picker */}
-                                {editAudioSource === 'file' && (
-                                    <div className="space-y-3">
-                                        {loadingFiles ? (
-                                            <div className="flex items-center gap-2 py-4 text-sm text-slate-400">
-                                                <RefreshCw className="w-4 h-4 animate-spin" /> Đang tải danh sách file...
-                                            </div>
-                                        ) : refFiles.length === 0 ? (
-                                            <div className="py-6 text-center rounded-xl bg-white/[0.02] border border-white/5">
-                                                <FileAudio className="w-8 h-8 mx-auto mb-2 text-slate-600" />
-                                                <p className="text-sm text-slate-500">Không có file nào trong thư mục ref_audio</p>
-                                            </div>
-                                        ) : (
-                                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 max-h-48 overflow-y-auto pr-1">
-                                                {refFiles.map((file, idx) => (
-                                                    <button
-                                                        key={idx}
-                                                        onClick={() => setEditSelectedFile(file)}
-                                                        className={`flex items-center gap-3 px-4 py-3 rounded-xl text-left text-sm transition-all ${
-                                                            editSelectedFile?.path === file.path
-                                                                ? 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
-                                                                : 'bg-white/[0.02] border border-white/5 text-slate-400 hover:text-white hover:border-white/15'
-                                                        }`}
-                                                    >
-                                                        <FileAudio className="w-4 h-4 shrink-0" />
-                                                        <span className="truncate">{file.filename}</span>
-                                                        {editSelectedFile?.path === file.path && <Check className="w-4 h-4 ml-auto text-amber-400 shrink-0" />}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        )}
-                                        {editSelectedFile && (
-                                            <div className="flex items-center gap-2 pt-1">
-                                                <span className="text-xs text-slate-500">Đã chọn:</span>
-                                                <span className="text-xs font-medium text-amber-400">{editSelectedFile.filename}</span>
-                                                <button
-                                                    onClick={async () => {
-                                                        try {
-                                                            const r = await window.electronAPI.tts.readAudio(editSelectedFile.path)
-                                                            if (r.success) {
-                                                                const blob = new Blob([new Uint8Array(r.data)], { type: r.mimeType })
-                                                                const url = URL.createObjectURL(blob)
-                                                                const a = new Audio(url)
-                                                                a.onended = () => URL.revokeObjectURL(url)
-                                                                a.play()
-                                                            }
-                                                        } catch {}
-                                                    }}
-                                                    className="flex items-center gap-1 px-2 py-1 ml-2 rounded-md bg-white/5 text-slate-400 hover:text-white text-[11px] transition-all"
-                                                >
-                                                    <Play className="w-3 h-3" /> Nghe
-                                                </button>
-                                            </div>
-                                        )}
+                                {/* Transcript */}
+                                <div>
+                                    <label className="block mb-2 text-sm font-medium text-slate-400">Transcript</label>
+                                    <div className="flex gap-2">
+                                        <textarea
+                                            value={editTranscript}
+                                            onChange={(e) => setEditTranscript(e.target.value)}
+                                            placeholder="Nhập nội dung mà audio mẫu đang đọc..."
+                                            rows={3}
+                                            className="flex-1 px-4 py-3 rounded-xl bg-[#0a0a12] border border-white/10 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-500/50 transition-colors resize-none"
+                                        />
+                                        <button
+                                            onClick={editAutoTranscribe}
+                                            disabled={editTranscribing}
+                                            className="self-start flex items-center gap-2 px-4 py-3 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-400 hover:bg-violet-500/20 text-sm font-medium transition-all disabled:opacity-50 whitespace-nowrap"
+                                        >
+                                            {editTranscribing ? (
+                                                <><RefreshCw className="w-4 h-4 animate-spin" /> Đang nhận dạng...</>
+                                            ) : (
+                                                <><Zap className="w-4 h-4" /> Tự động nhận dạng</>
+                                            )}
+                                        </button>
                                     </div>
-                                )}
-                            </div>
+                                </div>
 
-                            {/* Transcript */}
-                            <div>
-                                <label className="block mb-2 text-sm font-medium text-slate-400">Transcript</label>
-                                <div className="flex gap-2">
-                                    <textarea
-                                        value={editTranscript}
-                                        onChange={(e) => setEditTranscript(e.target.value)}
-                                        placeholder="Nhập nội dung mà audio mẫu đang đọc..."
-                                        rows={3}
-                                        className="flex-1 px-4 py-3 rounded-xl bg-[#0a0a12] border border-white/10 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-500/50 transition-colors resize-none"
-                                    />
+                                {/* Actions */}
+                                <div className="flex justify-end gap-3 pt-2">
                                     <button
-                                        onClick={editAutoTranscribe}
-                                        disabled={editTranscribing}
-                                        className="self-start flex items-center gap-2 px-4 py-3 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-400 hover:bg-violet-500/20 text-sm font-medium transition-all disabled:opacity-50 whitespace-nowrap"
+                                        onClick={cancelEdit}
+                                        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white font-medium text-sm transition-all"
                                     >
-                                        {editTranscribing ? (
-                                            <><RefreshCw className="w-4 h-4 animate-spin" /> Đang nhận dạng...</>
+                                        <X className="w-4 h-4" /> Hủy
+                                    </button>
+                                    <button
+                                        onClick={saveEdit}
+                                        disabled={editSaving || !editName.trim()}
+                                        className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-white font-medium hover:shadow-[0_0_30px_rgba(245,158,11,0.3)] transition-all disabled:opacity-40 disabled:cursor-not-allowed text-sm"
+                                    >
+                                        {editSaving ? (
+                                            <><RefreshCw className="w-4 h-4 animate-spin" /> Đang lưu...</>
                                         ) : (
-                                            <><Zap className="w-4 h-4" /> Tự động nhận dạng</>
+                                            <><Save className="w-4 h-4" /> Lưu thay đổi</>
                                         )}
                                     </button>
                                 </div>
                             </div>
+                        )}
 
-                            {/* Actions */}
-                            <div className="flex justify-end gap-3 pt-2">
-                                <button
-                                    onClick={cancelEdit}
-                                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white font-medium text-sm transition-all"
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                            {voices.map(voice => (
+                                <div
+                                    key={voice.id}
+                                    className={`rounded-2xl bg-white/[0.03] border p-5 transition-all ${editingId === voice.id
+                                        ? 'border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.1)]'
+                                        : testVoiceId === voice.id
+                                            ? 'border-cyan-500/40 shadow-[0_0_20px_rgba(6,182,212,0.1)]'
+                                            : 'border-white/10 hover:border-white/20'
+                                        }`}
                                 >
-                                    <X className="w-4 h-4" /> Hủy
-                                </button>
-                                <button
-                                    onClick={saveEdit}
-                                    disabled={editSaving || !editName.trim()}
-                                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-white font-medium hover:shadow-[0_0_30px_rgba(245,158,11,0.3)] transition-all disabled:opacity-40 disabled:cursor-not-allowed text-sm"
-                                >
-                                    {editSaving ? (
-                                        <><RefreshCw className="w-4 h-4 animate-spin" /> Đang lưu...</>
-                                    ) : (
-                                        <><Save className="w-4 h-4" /> Lưu thay đổi</>
-                                    )}
-                                </button>
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                        {voices.map(voice => (
-                            <div
-                                key={voice.id}
-                                className={`rounded-2xl bg-white/[0.03] border p-5 transition-all ${editingId === voice.id
-                                    ? 'border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.1)]'
-                                    : testVoiceId === voice.id
-                                        ? 'border-cyan-500/40 shadow-[0_0_20px_rgba(6,182,212,0.1)]'
-                                        : 'border-white/10 hover:border-white/20'
-                                    }`}
-                            >
-                                {/* View mode */}
+                                    {/* View mode */}
                                     <>
                                         <div className="flex items-start justify-between mb-3">
                                             <div className="flex-1 min-w-0">
@@ -1052,9 +1227,9 @@ export default function VoiceCreate() {
                                             </button>
                                         </div>
                                     </>
-                            </div>
-                        ))}
-                    </div>
+                                </div>
+                            ))}
+                        </div>
                     </>
                 )}
             </div>
