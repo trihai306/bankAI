@@ -82,7 +82,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     convertToWav: (webmPath) =>
       ipcRenderer.invoke("tts:convert-to-wav", webmPath),
     generate: (config) => ipcRenderer.invoke("tts:generate", config),
-    pickVoiceFile: () => ipcRenderer.invoke("tts:pick-voice-file"),
+    pickVoiceFile: (voiceName) => ipcRenderer.invoke("tts:pick-voice-file", voiceName),
   },
 
   // Voice Chat (Realtime Voice Conversation)

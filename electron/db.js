@@ -4,6 +4,92 @@ import { app } from "electron";
 
 let db;
 
+// Current schema version — increment when adding migrations
+const SCHEMA_VERSION = 1;
+
+// Migration definitions: each entry runs once when upgrading from (version-1) to (version)
+// Add new migrations at the end of this array
+const MIGRATIONS = [
+  // Version 1: baseline schema (runs only for brand new databases)
+  // Existing databases that already have tables get version set to 1 automatically
+
+  // --- Add future migrations below ---
+  // {
+  //   version: 2,
+  //   description: "Add language column to voices",
+  //   up: (db) => {
+  //     db.exec(`ALTER TABLE voices ADD COLUMN language TEXT DEFAULT 'vi'`);
+  //   },
+  // },
+];
+
+function getSchemaVersion() {
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get();
+    return row ? parseInt(row.value, 10) : 0;
+  } catch {
+    // settings table might not exist yet
+    return 0;
+  }
+}
+
+function setSchemaVersion(version) {
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(
+    "schema_version",
+    String(version),
+  );
+}
+
+function runMigrations() {
+  const currentVersion = getSchemaVersion();
+
+  if (currentVersion >= SCHEMA_VERSION) {
+    console.log(`[DB] Schema is up to date (v${currentVersion})`);
+    return;
+  }
+
+  // If tables already exist but no version tracked, set baseline
+  if (currentVersion === 0) {
+    const hasVoicesTable = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='voices'")
+      .get();
+
+    if (hasVoicesTable) {
+      console.log("[DB] Existing database detected, setting baseline schema version to 1");
+      setSchemaVersion(1);
+
+      // Run only migrations above baseline
+      const pendingMigrations = MIGRATIONS.filter((m) => m.version > 1);
+      for (const migration of pendingMigrations) {
+        console.log(`[DB] Running migration v${migration.version}: ${migration.description}`);
+        migration.up(db);
+      }
+      setSchemaVersion(SCHEMA_VERSION);
+      return;
+    }
+  }
+
+  // Run pending migrations sequentially
+  const pendingMigrations = MIGRATIONS.filter((m) => m.version > currentVersion);
+  if (pendingMigrations.length > 0) {
+    console.log(`[DB] Upgrading schema from v${currentVersion} to v${SCHEMA_VERSION} (${pendingMigrations.length} migration(s))`);
+
+    for (const migration of pendingMigrations) {
+      console.log(`[DB] Running migration v${migration.version}: ${migration.description}`);
+      try {
+        db.transaction(() => {
+          migration.up(db);
+          setSchemaVersion(migration.version);
+        })();
+        console.log(`[DB] Migration v${migration.version} completed`);
+      } catch (err) {
+        console.error(`[DB] Migration v${migration.version} FAILED:`, err.message);
+        throw err;
+      }
+    }
+  }
+}
+
 export function initDB() {
   const userDataPath = app.getPath("userData");
   const dbPath = path.join(userDataPath, "voice-bot.db");
@@ -13,7 +99,7 @@ export function initDB() {
   db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
 
-  // Create tables
+  // Create tables (IF NOT EXISTS ensures safety for existing DBs)
   db.exec(`
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -51,9 +137,17 @@ export function initDB() {
         );
     `);
 
+  // Run schema migrations
+  runMigrations();
+
+  // Set version for brand new databases
+  if (getSchemaVersion() === 0) {
+    setSchemaVersion(SCHEMA_VERSION);
+  }
+
   // Initialize default settings only (no fake call data)
   const settingsCount = db
-    .prepare("SELECT count(*) as count FROM settings")
+    .prepare("SELECT count(*) as count FROM settings WHERE key != 'schema_version'")
     .get().count;
   if (settingsCount === 0) {
     console.log("Initializing default settings...");

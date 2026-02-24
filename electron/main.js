@@ -548,7 +548,7 @@ ipcMain.handle("tts:upload-ref", async (event, { audioData, filename }) => {
 });
 
 // Pick voice file from system (wav/mp3), copy to ref_audio, auto-convert to wav
-ipcMain.handle("tts:pick-voice-file", async () => {
+ipcMain.handle("tts:pick-voice-file", async (_, voiceName) => {
   try {
     const mainWindow = BrowserWindow.getAllWindows()[0];
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -565,9 +565,49 @@ ipcMain.handle("tts:pick-voice-file", async () => {
 
     const sourcePath = result.filePaths[0];
     const ext = path.extname(sourcePath).toLowerCase();
-    const baseName = path.basename(sourcePath, ext);
-    const safeBaseName = baseName.replace(/[^a-zA-Z0-9_\-]/g, "_");
-    const destFilename = `${safeBaseName}_${Date.now()}${ext}`;
+
+    // Validate audio duration (5-30 seconds) using ffprobe
+    const duration = await new Promise((resolve) => {
+      const ffprobe = spawn("ffprobe", [
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        sourcePath,
+      ]);
+      let output = "";
+      ffprobe.stdout.on("data", (d) => { output += d.toString(); });
+      ffprobe.stderr.on("data", () => { });
+      ffprobe.on("close", (code) => {
+        console.log(`[VoiceFile] ffprobe exit code: ${code}, output: "${output.trim()}"`);
+        const parsed = parseFloat(output.trim());
+        resolve(isNaN(parsed) ? -1 : parsed);
+      });
+      ffprobe.on("error", (err) => {
+        console.error("[VoiceFile] ffprobe error:", err.message);
+        resolve(-1);
+      });
+    });
+
+    console.log(`[VoiceFile] Audio duration: ${duration}s (valid range: 5-30s)`);
+
+    if (duration > 0 && (duration < 5 || duration > 30)) {
+      console.log(`[VoiceFile] Duration out of range, rejecting file`);
+      return {
+        success: false,
+        error: "duration_invalid",
+        duration: Math.round(duration * 10) / 10,
+        min: 5,
+        max: 30,
+      };
+    }
+
+    // Build filename: slug_YYYYMMDD_HHmmss.ext
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+    const slug = voiceName
+      ? voiceName.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d").replace(/[^a-zA-Z0-9]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "").toLowerCase()
+      : "";
+    const destFilename = slug ? `${slug}_${dateStr}${ext}` : `${dateStr}${ext}`;
     const destPath = path.join(REF_AUDIO_DIR, destFilename);
 
     // Copy file to ref_audio directory
@@ -578,7 +618,7 @@ ipcMain.handle("tts:pick-voice-file", async () => {
 
     // Auto-convert non-wav to wav using ffmpeg
     if (ext !== ".wav") {
-      const wavFilename = `${safeBaseName}_${Date.now()}.wav`;
+      const wavFilename = slug ? `${slug}_${dateStr}.wav` : `${dateStr}.wav`;
       const wavPath = path.join(REF_AUDIO_DIR, wavFilename);
 
       console.log(`[VoiceFile] Converting ${ext} to WAV...`);

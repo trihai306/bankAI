@@ -1,5 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { Mic, Play, Pause, Trash2, AudioLines, AlertCircle, Check, RefreshCw, Volume2, Zap, Plus, Save, TestTube, Edit3, X, FolderOpen, FileAudio, Upload } from 'lucide-react'
+import { Mic, Play, Pause, Trash2, AudioLines, AlertCircle, Check, RefreshCw, Volume2, Zap, Plus, Save, TestTube, Edit3, X, FolderOpen, FileAudio, Upload, Clock } from 'lucide-react'
+
+const MIN_AUDIO_DURATION = 5
+const MAX_AUDIO_DURATION = 30
 
 export default function VoiceCreate() {
     // Voice list state
@@ -22,6 +25,7 @@ export default function VoiceCreate() {
 
     // Upload state
     const [uploadedFile, setUploadedFile] = useState(null)
+    const [durationWarning, setDurationWarning] = useState(null)
     const [uploading, setUploading] = useState(false)
 
     // Recording state
@@ -63,6 +67,7 @@ export default function VoiceCreate() {
     // Edit upload state
     const [editUploadedFile, setEditUploadedFile] = useState(null)
     const [editUploading, setEditUploading] = useState(false)
+    const [editDurationWarning, setEditDurationWarning] = useState(null)
 
     useEffect(() => {
         loadVoices()
@@ -164,9 +169,19 @@ export default function VoiceCreate() {
     // === Upload Voice File ===
     const handleUploadFile = async () => {
         setUploading(true)
+        setDurationWarning(null)
         try {
-            const result = await window.electronAPI.tts.pickVoiceFile()
+            const result = await window.electronAPI.tts.pickVoiceFile(voiceName)
             if (result.canceled) { setUploading(false); return }
+            if (result.error === 'duration_invalid') {
+                setDurationWarning({
+                    duration: result.duration,
+                    min: result.min || MIN_AUDIO_DURATION,
+                    max: result.max || MAX_AUDIO_DURATION,
+                })
+                setUploading(false)
+                return
+            }
             if (!result.success) throw new Error(result.error)
             setUploadedFile({
                 path: result.path,
@@ -183,9 +198,19 @@ export default function VoiceCreate() {
 
     const handleEditUploadFile = async () => {
         setEditUploading(true)
+        setEditDurationWarning(null)
         try {
-            const result = await window.electronAPI.tts.pickVoiceFile()
+            const result = await window.electronAPI.tts.pickVoiceFile(editName)
             if (result.canceled) { setEditUploading(false); return }
+            if (result.error === 'duration_invalid') {
+                setEditDurationWarning({
+                    duration: result.duration,
+                    min: result.min || MIN_AUDIO_DURATION,
+                    max: result.max || MAX_AUDIO_DURATION,
+                })
+                setEditUploading(false)
+                return
+            }
             if (!result.success) throw new Error(result.error)
             setEditUploadedFile({
                 path: result.path,
@@ -648,7 +673,21 @@ export default function VoiceCreate() {
                                         <><Upload className="w-5 h-5" /> Chọn file từ máy tính (.wav, .mp3)</>
                                     )}
                                 </button>
-                                <p className="text-[11px] text-slate-500">File .mp3 sẽ được tự động chuyển đổi sang .wav</p>
+                                <p className="text-[11px] text-slate-500">File .mp3 sẽ được tự động chuyển đổi sang .wav · Độ dài yêu cầu: 5-30 giây</p>
+
+                                {durationWarning && (
+                                    <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 text-sm">
+                                        <Clock className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                                        <div className="flex-1">
+                                            <p className="font-semibold mb-0.5">File âm thanh không hợp lệ</p>
+                                            <p className="text-amber-400/80 text-xs">
+                                                File có độ dài <span className="font-bold text-amber-300">{durationWarning.duration}s</span>,
+                                                chỉ chấp nhận file từ <span className="font-bold text-amber-300">{durationWarning.min}s</span> đến <span className="font-bold text-amber-300">{durationWarning.max}s</span>.
+                                            </p>
+                                        </div>
+                                        <button onClick={() => setDurationWarning(null)} className="text-amber-400/50 hover:text-amber-400 transition-colors text-xs">✕</button>
+                                    </div>
+                                )}
 
                                 {uploadedFile && (
                                     <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
@@ -955,7 +994,21 @@ export default function VoiceCreate() {
                                                     <><Upload className="w-5 h-5" /> Chọn file từ máy tính (.wav, .mp3)</>
                                                 )}
                                             </button>
-                                            <p className="text-[11px] text-slate-500">File .mp3 sẽ được tự động chuyển đổi sang .wav</p>
+                                            <p className="text-[11px] text-slate-500">File .mp3 sẽ được tự động chuyển đổi sang .wav · Độ dài yêu cầu: 5-30 giây</p>
+
+                                            {editDurationWarning && (
+                                                <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 text-sm">
+                                                    <Clock className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                                                    <div className="flex-1">
+                                                        <p className="font-semibold mb-0.5">File âm thanh không hợp lệ</p>
+                                                        <p className="text-amber-400/80 text-xs">
+                                                            File có độ dài <span className="font-bold text-amber-300">{editDurationWarning.duration}s</span>,
+                                                            chỉ chấp nhận file từ <span className="font-bold text-amber-300">{editDurationWarning.min}s</span> đến <span className="font-bold text-amber-300">{editDurationWarning.max}s</span>.
+                                                        </p>
+                                                    </div>
+                                                    <button onClick={() => setEditDurationWarning(null)} className="text-amber-400/50 hover:text-amber-400 transition-colors text-xs">✕</button>
+                                                </div>
+                                            )}
 
                                             {editUploadedFile && (
                                                 <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
