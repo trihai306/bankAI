@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Mic, MicOff, Square, Volume2, Bot, User, AlertCircle, Check, Loader2, AudioLines, FileAudio, FolderOpen, ChevronDown, ChevronUp, Play } from 'lucide-react'
+import { Mic, MicOff, Square, Volume2, Bot, User, AlertCircle, Check, Loader2, AudioLines, FileAudio, FolderOpen, ChevronDown, ChevronUp, Play, SendHorizontal, MessageSquareText } from 'lucide-react'
 
 const SILENCE_THRESHOLD = 0.015
 const SILENCE_DURATION_MS = 2000
@@ -18,6 +18,9 @@ export default function VoiceChat() {
     const [refAudios, setRefAudios] = useState([])
     const [showRefPanel, setShowRefPanel] = useState(false)
     const [previewingFile, setPreviewingFile] = useState(null)
+    const [textInput, setTextInput] = useState('')
+    const [showTextInput, setShowTextInput] = useState(false)
+    const textInputRef = useRef(null)
     const previewAudioRef = useRef(null)
 
     const mediaRecorderRef = useRef(null)
@@ -566,6 +569,59 @@ export default function VoiceChat() {
         }
     }
 
+    const sendTextMessage = async () => {
+        const text = textInput.trim()
+        if (!text || isProcessingRef.current) return
+
+        setError(null)
+        isProcessingRef.current = true
+        setIsProcessing(true)
+        setTextInput('')
+
+        const { registerListeners, waitForPlayback } = createStreamHandler()
+
+        try {
+            // Ensure voice engine is started (with selected voice for TTS)
+            if (!isListening) {
+                await window.electronAPI.voiceChat.start({
+                    voiceId: selectedVoiceId || undefined,
+                })
+            }
+
+            setPipelineStep('llm')
+            registerListeners()
+
+            const result = await window.electronAPI.voiceChat.processText(text)
+
+            await waitForPlayback()
+
+            if (!result.success) {
+                setError(result.error)
+            }
+
+            setPipelineStep('done')
+        } catch (err) {
+            console.error('Text processing error:', err)
+            setError(`Processing failed: ${err.message}`)
+        } finally {
+            window.electronAPI.voiceChat.removeStreamListeners()
+            isProcessingRef.current = false
+            setIsProcessing(false)
+            setPipelineStep(null)
+
+            if (!isListening) {
+                try { await window.electronAPI.voiceChat.stop() } catch { }
+            }
+        }
+    }
+
+    const handleTextKeyDown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            sendTextMessage()
+        }
+    }
+
     const getPipelineSteps = () => {
         const steps = [
             { key: 'stt', label: 'Whisper STT', icon: '🎤' },
@@ -755,6 +811,39 @@ export default function VoiceChat() {
                 </div>
             )}
 
+            {/* Text Input Bar */}
+            {showTextInput && (
+                <div className="px-6 py-3 border-t border-white/10 bg-white/[0.02]">
+                    <div className="flex items-center gap-3">
+                        <div className="flex-1 relative">
+                            <input
+                                ref={textInputRef}
+                                type="text"
+                                value={textInput}
+                                onChange={(e) => setTextInput(e.target.value)}
+                                onKeyDown={handleTextKeyDown}
+                                disabled={isProcessing}
+                                placeholder="Nhập tin nhắn khi không có micro..."
+                                className="w-full px-4 py-3 rounded-xl bg-white/[0.05] border border-white/10 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50 focus:bg-white/[0.08] transition-all disabled:opacity-50"
+                                autoFocus
+                            />
+                        </div>
+                        <button
+                            onClick={sendTextMessage}
+                            disabled={isProcessing || !textInput.trim()}
+                            title="Gửi tin nhắn"
+                            className="w-11 h-11 rounded-xl flex items-center justify-center transition-all duration-200 disabled:opacity-30 bg-gradient-to-br from-cyan-500 to-teal-600 hover:from-cyan-400 hover:to-teal-500 shadow-lg shadow-cyan-500/20 text-white disabled:shadow-none"
+                        >
+                            {isProcessing ? (
+                                <Loader2 className="w-5 h-5 animate-spin" />
+                            ) : (
+                                <SendHorizontal className="w-5 h-5" />
+                            )}
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* Bottom Control Bar */}
             <div className="p-6 border-t border-white/10">
                 <div className="flex items-center justify-center gap-6">
@@ -770,6 +859,24 @@ export default function VoiceChat() {
                             </div>
                         </div>
                     )}
+
+                    {/* Text Input Toggle Button */}
+                    <button
+                        onClick={() => {
+                            setShowTextInput(v => !v)
+                            if (!showTextInput) {
+                                setTimeout(() => textInputRef.current?.focus(), 100)
+                            }
+                        }}
+                        disabled={isProcessing}
+                        title="Nhập text thay vì nói"
+                        className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 disabled:opacity-50 border ${showTextInput
+                            ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
+                            : 'bg-white/[0.06] border-white/10 hover:bg-white/[0.1] hover:border-cyan-500/30 text-slate-400 hover:text-cyan-400'
+                            }`}
+                    >
+                        <MessageSquareText className="w-5 h-5" />
+                    </button>
 
                     {/* Main Mic Button */}
                     <button
@@ -832,7 +939,7 @@ export default function VoiceChat() {
 
                 {!isListening && (
                     <p className="text-center text-xs text-slate-600 mt-3">
-                        Bấm micro để nói hoặc chọn file âm thanh để test
+                        Bấm micro để nói, nhấn 💬 để gõ text, hoặc chọn file âm thanh
                     </p>
                 )}
             </div>

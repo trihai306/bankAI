@@ -9,7 +9,7 @@ import os from "os";
  * Designed for reuse across VoiceChat (mic) and future PhoneCall (SIP) features.
  */
 // Sentence delimiters — when LLM output hits one of these, flush to TTS
-const SENTENCE_DELIMITERS = /[.!?;,。，！？\n]/;
+const SENTENCE_DELIMITERS = /[.!?;。！？\n]/;
 
 export class VoiceConversationEngine {
   constructor({ nodewhisper, workerPrompt, workerPromptStream, initQwenModel, runPython, ttsServer, dbAPI }) {
@@ -221,6 +221,198 @@ export class VoiceConversationEngine {
    *   { type: 'tts-audio', audioPath, chunkIndex }
    *   { type: 'done',      timings, responseText }
    */
+  /**
+   * Text-only pipeline: skip STT, go directly to LLM → TTS
+   * Used when user types text instead of speaking
+   * @param {string} userText - the text typed by user
+   * @param {function} onEvent - same callback interface as processAudioChunkStream
+   */
+  async processTextStream(userText, onEvent) {
+    if (!this.isActive) {
+      return { success: false, error: "Voice engine not active" };
+    }
+
+    const trimmedText = (userText || "").trim();
+    if (!trimmedText || trimmedText.length < 2) {
+      return { success: false, error: "Empty text" };
+    }
+
+    console.log("");
+    console.log("╔══════════════════════════════════════════════════╗");
+    console.log("║  ⌨️  TEXT INPUT PIPELINE ACTIVATED                ║");
+    console.log("╚══════════════════════════════════════════════════╝");
+    console.log(`[VoiceEngine:Text] Input: "${trimmedText}"`);
+
+    const pipelineStart = performance.now();
+    const timings = {};
+
+    try {
+      // Notify frontend: "STT done" (text input, no actual STT)
+      onEvent?.({ type: "stt-done", transcript: trimmedText });
+
+      // LLM streaming (reuse same logic as processAudioChunkStream)
+      const stepStart = performance.now();
+      console.log("[VoiceEngine:Text] Step: Llama LLM (streaming)...");
+      await this.initQwenModel();
+
+      const contextMessages = this.conversationHistory
+        .slice(-6)
+        .map((m) => `${m.role === "user" ? "Người dùng" : "AI"}: ${m.content}`)
+        .join("\n");
+
+      const fullPrompt = contextMessages
+        ? `${this.systemPrompt}\n\nLịch sử hội thoại:\n${contextMessages}\n\nNgười dùng: ${trimmedText}\n\nAI:`
+        : `${this.systemPrompt}\n\nNgười dùng: ${trimmedText}\n\nAI:`;
+
+      let sentenceBuffer = "";
+      let fullResponseText = "";
+      let chunkIndex = 0;
+      const audioPaths = [];
+      const ttsPromises = [];
+      const chunkTimings = [];  // { idx, flushT, ttsReadyT, text }
+
+      const MAX_TTS_CONCURRENT = 2;
+      let activeTts = 0;
+      const ttsPending = [];
+
+      const startTtsTask = (idx, text) => {
+        const run = async () => {
+          activeTts++;
+          try {
+            const ttsResult = await this.ttsServer.generate({
+              refAudio: this.voiceConfig.refAudio,
+              refText: this.voiceConfig.refText || "",
+              genText: text,
+              speed: 1.0,
+            });
+
+            if (ttsResult.success) {
+              audioPaths[idx] = ttsResult.output;
+              const ttsReadyT = ((performance.now() - pipelineStart) / 1000).toFixed(2);
+              if (chunkTimings[idx]) chunkTimings[idx].ttsReadyT = ttsReadyT;
+              console.log(`[VoiceEngine:Text] 🔊 TTS chunk ${idx} ready (t=${ttsReadyT}s)`);
+              onEvent?.({ type: "tts-audio", audioPath: ttsResult.output, chunkIndex: idx });
+            } else {
+              console.warn(`[VoiceEngine:Text] TTS chunk ${idx} failed:`, ttsResult.error);
+              audioPaths[idx] = null;
+              onEvent?.({ type: "tts-chunk-failed", chunkIndex: idx });
+            }
+          } catch (err) {
+            console.warn(`[VoiceEngine:Text] TTS chunk ${idx} error:`, err.message);
+            audioPaths[idx] = null;
+            onEvent?.({ type: "tts-chunk-failed", chunkIndex: idx });
+          }
+          activeTts--;
+          if (ttsPending.length > 0) {
+            const next = ttsPending.shift();
+            next();
+          }
+        };
+
+        const promise = new Promise((resolve) => {
+          const wrappedRun = async () => {
+            await run();
+            resolve();
+          };
+          if (activeTts < MAX_TTS_CONCURRENT) {
+            wrappedRun();
+          } else {
+            ttsPending.push(wrappedRun);
+          }
+        });
+        ttsPromises.push(promise);
+      };
+
+      const flushSentence = (sentence) => {
+        const trimmed = sentence.trim();
+        if (!trimmed || trimmed.length < 2) return;
+
+        const idx = chunkIndex++;
+        const flushT = ((performance.now() - pipelineStart) / 1000).toFixed(2);
+        chunkTimings[idx] = { idx, flushT, ttsReadyT: '-', text: trimmed.substring(0, 40) };
+        console.log(`[VoiceEngine:Text] 📝 Chunk ${idx}: "${trimmed}" → TTS fired (t=${flushT}s)`);
+        onEvent?.({ type: "llm-chunk", text: trimmed, fullText: fullResponseText });
+
+        if (this.voiceConfig?.refAudio) {
+          startTtsTask(idx, trimmed);
+        }
+      };
+
+      const responseText = await this.workerPromptStream(
+        fullPrompt,
+        (token) => {
+          fullResponseText += token;
+          sentenceBuffer += token;
+
+          const match = sentenceBuffer.match(SENTENCE_DELIMITERS);
+          if (match) {
+            const delimiterIdx = sentenceBuffer.indexOf(match[0]);
+            const sentence = sentenceBuffer.substring(0, delimiterIdx + 1);
+            sentenceBuffer = sentenceBuffer.substring(delimiterIdx + 1);
+            flushSentence(sentence);
+          }
+        },
+        0.5,
+        0.9,
+      );
+
+      if (sentenceBuffer.trim().length >= 2) {
+        flushSentence(sentenceBuffer);
+      }
+      sentenceBuffer = "";
+
+      timings.llm = performance.now() - stepStart;
+      console.log(`[VoiceEngine:Text] ⏱ LLM: ${(timings.llm / 1000).toFixed(2)}s (${chunkIndex} chunks)`);
+
+      this.conversationHistory.push(
+        { role: "user", content: trimmedText },
+        { role: "assistant", content: responseText },
+      );
+
+      const ttsStart = performance.now();
+      await Promise.allSettled(ttsPromises);
+      timings.tts = performance.now() - ttsStart;
+      console.log(`[VoiceEngine:Text] ⏱ TTS total: ${(timings.tts / 1000).toFixed(2)}s`);
+
+      const totalTime = performance.now() - pipelineStart;
+      timings.total = totalTime;
+      console.log("");
+      console.log("╔══════════════════════════════════════════════════════════════════════════════╗");
+      console.log("║   ⌨️  Text Input Pipeline Performance                                       ║");
+      console.log("╠══════════════════════════════════════════════════════════════════════════════╣");
+      console.log(`║  LLM            : ${String((timings.llm / 1000).toFixed(2)).padStart(6)}s  (${chunkIndex} chunks)                                     ║`);
+      console.log(`║  TTS wait       : ${String((timings.tts / 1000).toFixed(2)).padStart(6)}s  (parallel×2)                                       ║`);
+      console.log(`║  ⚡ Total       : ${String((totalTime / 1000).toFixed(2)).padStart(6)}s                                                ║`);
+      console.log("╠══════════════════════════════════════════════════════════════════════════════╣");
+      console.log("║  Chunk │ LLM Flush │ TTS Ready │ Text                                       ║");
+      console.log("║────────┼───────────┼───────────┼────────────────────────────────────────────║");
+      for (const ct of chunkTimings) {
+        if (!ct) continue;
+        const idxStr = String(ct.idx).padStart(5);
+        const flushStr = (ct.flushT + 's').padStart(8);
+        const ttsStr = (ct.ttsReadyT === '-' ? '   -   ' : (ct.ttsReadyT + 's').padStart(8));
+        const textStr = ct.text.padEnd(40).substring(0, 40);
+        console.log(`║  ${idxStr} │ ${flushStr}  │ ${ttsStr}  │ ${textStr} ║`);
+      }
+      console.log("╚══════════════════════════════════════════════════════════════════════════════╝");
+      console.log("");
+
+      onEvent?.({ type: "done", timings, responseText, chunkCount: chunkIndex });
+
+      return {
+        success: true,
+        transcript: trimmedText,
+        responseText,
+        audioPaths: audioPaths.filter(Boolean),
+        chunkCount: chunkIndex,
+        timings,
+      };
+    } catch (error) {
+      console.error("[VoiceEngine:Text] Pipeline error:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
   async processAudioChunkStream(audioData, filename, onEvent) {
     if (!this.isActive) {
       return { success: false, error: "Voice engine not active" };
@@ -293,6 +485,7 @@ export class VoiceConversationEngine {
       let chunkIndex = 0;
       const audioPaths = [];    // ordered results
       const ttsPromises = [];   // all TTS promises for final await
+      const chunkTimings = [];  // { idx, flushT, ttsReadyT, text }
 
       // Concurrency-limited parallel TTS pool (F5-TTS can't handle too many connections)
       const MAX_TTS_CONCURRENT = 2;
@@ -312,7 +505,9 @@ export class VoiceConversationEngine {
 
             if (ttsResult.success) {
               audioPaths[idx] = ttsResult.output;
-              console.log(`[VoiceEngine:Stream] 🔊 TTS chunk ${idx} ready`);
+              const ttsReadyT = ((performance.now() - pipelineStart) / 1000).toFixed(2);
+              if (chunkTimings[idx]) chunkTimings[idx].ttsReadyT = ttsReadyT;
+              console.log(`[VoiceEngine:Stream] 🔊 TTS chunk ${idx} ready (t=${ttsReadyT}s)`);
               onEvent?.({ type: "tts-audio", audioPath: ttsResult.output, chunkIndex: idx });
             } else {
               console.warn(`[VoiceEngine:Stream] TTS chunk ${idx} failed:`, ttsResult.error);
@@ -351,7 +546,9 @@ export class VoiceConversationEngine {
         if (!trimmed || trimmed.length < 2) return;
 
         const idx = chunkIndex++;
-        console.log(`[VoiceEngine:Stream] 📝 Chunk ${idx}: "${trimmed}"`);
+        const flushT = ((performance.now() - pipelineStart) / 1000).toFixed(2);
+        chunkTimings[idx] = { idx, flushT, ttsReadyT: '-', text: trimmed.substring(0, 40) };
+        console.log(`[VoiceEngine:Stream] 📝 Chunk ${idx}: "${trimmed}" → TTS fired (t=${flushT}s)`);
 
         // Notify frontend: LLM sentence chunk
         onEvent?.({ type: "llm-chunk", text: trimmed, fullText: fullResponseText });
@@ -407,16 +604,26 @@ export class VoiceConversationEngine {
       const totalTime = performance.now() - pipelineStart;
       timings.total = totalTime;
       console.log("");
-      console.log("╔══════════════════════════════════════════════╗");
-      console.log("║   🎤 Voice Stream Pipeline Performance       ║");
-      console.log("╠══════════════════════════════════════════════╣");
-      console.log(`║  Step 1 (Save)  : ${String(timings.save.toFixed(0)).padStart(6)}ms               ║`);
-      console.log(`║  Step 2 (STT)   : ${String((timings.stt / 1000).toFixed(2)).padStart(6)}s                ║`);
-      console.log(`║  Step 3 (LLM)   : ${String((timings.llm / 1000).toFixed(2)).padStart(6)}s  (${chunkIndex} chunks)  ║`);
-      console.log(`║  Step 4 (TTS)   : ${String((timings.tts / 1000).toFixed(2)).padStart(6)}s  (parallel×2)    ║`);
-      console.log("╠══════════════════════════════════════════════╣");
-      console.log(`║  ⚡ Total       : ${String((totalTime / 1000).toFixed(2)).padStart(6)}s                ║`);
-      console.log("╚══════════════════════════════════════════════╝");
+      console.log("╔══════════════════════════════════════════════════════════════════════════════╗");
+      console.log("║   🎤 Voice Stream Pipeline Performance                                       ║");
+      console.log("╠══════════════════════════════════════════════════════════════════════════════╣");
+      console.log(`║  Save           : ${String(timings.save.toFixed(0)).padStart(6)}ms                                              ║`);
+      console.log(`║  STT            : ${String((timings.stt / 1000).toFixed(2)).padStart(6)}s                                               ║`);
+      console.log(`║  LLM            : ${String((timings.llm / 1000).toFixed(2)).padStart(6)}s  (${chunkIndex} chunks)                                     ║`);
+      console.log(`║  TTS wait       : ${String((timings.tts / 1000).toFixed(2)).padStart(6)}s  (parallel×2)                                       ║`);
+      console.log(`║  ⚡ Total       : ${String((totalTime / 1000).toFixed(2)).padStart(6)}s                                                ║`);
+      console.log("╠══════════════════════════════════════════════════════════════════════════════╣");
+      console.log("║  Chunk │ LLM Flush │ TTS Ready │ Text                                       ║");
+      console.log("║────────┼───────────┼───────────┼────────────────────────────────────────────║");
+      for (const ct of chunkTimings) {
+        if (!ct) continue;
+        const idxStr = String(ct.idx).padStart(5);
+        const flushStr = (ct.flushT + 's').padStart(8);
+        const ttsStr = (ct.ttsReadyT === '-' ? '   -   ' : (ct.ttsReadyT + 's').padStart(8));
+        const textStr = ct.text.padEnd(40).substring(0, 40);
+        console.log(`║  ${idxStr} │ ${flushStr}  │ ${ttsStr}  │ ${textStr} ║`);
+      }
+      console.log("╚══════════════════════════════════════════════════════════════════════════════╝");
       console.log("");
 
       // Notify frontend: done

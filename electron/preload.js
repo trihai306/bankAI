@@ -98,6 +98,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     listRefAudios: () => ipcRenderer.invoke("tts:list-refs"),
     processRefFile: (filename) =>
       ipcRenderer.invoke("voice-chat:process-ref-file", filename),
+    processText: (text) =>
+      ipcRenderer.invoke("voice-chat:process-text", text),
     // Stream event listeners
     onStreamEvent: (callbacks) => {
       if (callbacks.onSttDone) {

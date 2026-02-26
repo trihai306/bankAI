@@ -1961,6 +1961,59 @@ ipcMain.handle("voice-chat:process-ref-file", async (event, filename) => {
   }
 });
 
+// Text input pipeline (skip STT, go directly LLM → TTS)
+ipcMain.handle("voice-chat:process-text", async (event, text) => {
+  console.log("\n[IPC] ⌨️ voice-chat:process-text called");
+  try {
+    const engine = getVoiceEngine();
+    if (!engine.isActive) {
+      engine.start({});
+    }
+
+    const sender = event.sender;
+
+    const onEvent = (evt) => {
+      if (sender.isDestroyed()) return;
+      switch (evt.type) {
+        case "stt-done":
+          sender.send("voice-stream:stt-done", { transcript: evt.transcript });
+          break;
+        case "llm-chunk":
+          sender.send("voice-stream:llm-chunk", { text: evt.text, fullText: evt.fullText });
+          break;
+        case "tts-audio": {
+          if (evt.audioPath && fs.existsSync(evt.audioPath)) {
+            const audioBuf = fs.readFileSync(evt.audioPath);
+            sender.send("voice-stream:tts-audio", {
+              audioData: Array.from(audioBuf),
+              chunkIndex: evt.chunkIndex,
+              mimeType: "audio/wav",
+            });
+          }
+          break;
+        }
+        case "done":
+          sender.send("voice-stream:done", {
+            timings: evt.timings,
+            responseText: evt.responseText,
+            chunkCount: evt.chunkCount,
+          });
+          break;
+        case "tts-chunk-failed":
+          sender.send("voice-stream:tts-chunk-failed", {
+            chunkIndex: evt.chunkIndex,
+          });
+          break;
+      }
+    };
+
+    const result = await engine.processTextStream(text, onEvent);
+    return result;
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 // Python Environment Management IPC
 const SETUP_SCRIPT = path.join(PYTHON_DIR, "setup_env.py");
 
