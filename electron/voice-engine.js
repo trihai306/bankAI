@@ -146,12 +146,12 @@ export class VoiceConversationEngine {
       );
 
       // Step 4: F5-TTS via persistent server (model stays in GPU memory)
-      let audioPath = null;
+      let audioBuffer = null;
       if (this.voiceConfig?.refAudio) {
         stepStart = performance.now();
         console.log("[VoiceEngine] Step 4: F5-TTS (persistent server)...");
         try {
-          const ttsResult = await this.ttsServer.generate({
+          const ttsResult = await this.ttsServer.generateWav({
             refAudio: this.voiceConfig.refAudio,
             refText: this.voiceConfig.refText || "",
             genText: responseText,
@@ -160,10 +160,10 @@ export class VoiceConversationEngine {
           timings.tts = performance.now() - stepStart;
 
           if (ttsResult.success) {
-            audioPath = ttsResult.output;
+            audioBuffer = ttsResult.audioBuffer;
             const serverTimings = ttsResult.timings || {};
             console.log(`[VoiceEngine] ⏱ Step 4 (TTS): ${(timings.tts / 1000).toFixed(2)}s (server: preprocess=${serverTimings.preprocess}s, generate=${serverTimings.generate}s)`);
-            console.log("[VoiceEngine] TTS audio:", audioPath);
+            console.log(`[VoiceEngine] TTS audio: ${audioBuffer.length} bytes`);
           } else {
             console.warn(`[VoiceEngine] ⏱ Step 4 (TTS) FAILED after ${(timings.tts / 1000).toFixed(2)}s:`, ttsResult.error);
           }
@@ -198,7 +198,7 @@ export class VoiceConversationEngine {
         success: true,
         transcript: userText,
         responseText,
-        audioPath,
+        audioBuffer,
         timings,
       };
     } catch (error) {
@@ -218,7 +218,7 @@ export class VoiceConversationEngine {
    * @param {function} onEvent - callback for streaming events:
    *   { type: 'stt-done',  transcript }
    *   { type: 'llm-chunk', text, fullText }  — each sentence-level chunk
-   *   { type: 'tts-audio', audioPath, chunkIndex }
+   *   { type: 'tts-audio', audioBuffer, chunkIndex }
    *   { type: 'done',      timings, responseText }
    */
   /**
@@ -267,11 +267,11 @@ export class VoiceConversationEngine {
       let sentenceBuffer = "";
       let fullResponseText = "";
       let chunkIndex = 0;
-      const audioPaths = [];
+      const audioBuffers = [];
       const ttsPromises = [];
       const chunkTimings = [];  // { idx, flushT, ttsReadyT, text }
 
-      const MAX_TTS_CONCURRENT = 2;
+      const MAX_TTS_CONCURRENT = 3;
       let activeTts = 0;
       const ttsPending = [];
 
@@ -279,7 +279,7 @@ export class VoiceConversationEngine {
         const run = async () => {
           activeTts++;
           try {
-            const ttsResult = await this.ttsServer.generate({
+            const ttsResult = await this.ttsServer.generateWav({
               refAudio: this.voiceConfig.refAudio,
               refText: this.voiceConfig.refText || "",
               genText: text,
@@ -287,19 +287,19 @@ export class VoiceConversationEngine {
             });
 
             if (ttsResult.success) {
-              audioPaths[idx] = ttsResult.output;
+              audioBuffers[idx] = ttsResult.audioBuffer;
               const ttsReadyT = ((performance.now() - pipelineStart) / 1000).toFixed(2);
               if (chunkTimings[idx]) chunkTimings[idx].ttsReadyT = ttsReadyT;
-              console.log(`[VoiceEngine:Text] 🔊 TTS chunk ${idx} ready (t=${ttsReadyT}s)`);
-              onEvent?.({ type: "tts-audio", audioPath: ttsResult.output, chunkIndex: idx });
+              console.log(`[VoiceEngine:Text] 🔊 TTS chunk ${idx} ready (t=${ttsReadyT}s, ${ttsResult.audioBuffer.length} bytes)`);
+              onEvent?.({ type: "tts-audio", audioBuffer: ttsResult.audioBuffer, chunkIndex: idx });
             } else {
               console.warn(`[VoiceEngine:Text] TTS chunk ${idx} failed:`, ttsResult.error);
-              audioPaths[idx] = null;
+              audioBuffers[idx] = null;
               onEvent?.({ type: "tts-chunk-failed", chunkIndex: idx });
             }
           } catch (err) {
             console.warn(`[VoiceEngine:Text] TTS chunk ${idx} error:`, err.message);
-            audioPaths[idx] = null;
+            audioBuffers[idx] = null;
             onEvent?.({ type: "tts-chunk-failed", chunkIndex: idx });
           }
           activeTts--;
@@ -403,7 +403,7 @@ export class VoiceConversationEngine {
         success: true,
         transcript: trimmedText,
         responseText,
-        audioPaths: audioPaths.filter(Boolean),
+        audioBuffers: audioBuffers.filter(Boolean),
         chunkCount: chunkIndex,
         timings,
       };
@@ -483,12 +483,12 @@ export class VoiceConversationEngine {
       let sentenceBuffer = "";
       let fullResponseText = "";
       let chunkIndex = 0;
-      const audioPaths = [];    // ordered results
+      const audioBuffers = [];  // ordered results (Buffer objects)
       const ttsPromises = [];   // all TTS promises for final await
       const chunkTimings = [];  // { idx, flushT, ttsReadyT, text }
 
       // Concurrency-limited parallel TTS pool (F5-TTS can't handle too many connections)
-      const MAX_TTS_CONCURRENT = 2;
+      const MAX_TTS_CONCURRENT = 3;
       let activeTts = 0;
       const ttsPending = [];    // overflow queue when at max concurrency
 
@@ -496,7 +496,7 @@ export class VoiceConversationEngine {
         const run = async () => {
           activeTts++;
           try {
-            const ttsResult = await this.ttsServer.generate({
+            const ttsResult = await this.ttsServer.generateWav({
               refAudio: this.voiceConfig.refAudio,
               refText: this.voiceConfig.refText || "",
               genText: text,
@@ -504,19 +504,19 @@ export class VoiceConversationEngine {
             });
 
             if (ttsResult.success) {
-              audioPaths[idx] = ttsResult.output;
+              audioBuffers[idx] = ttsResult.audioBuffer;
               const ttsReadyT = ((performance.now() - pipelineStart) / 1000).toFixed(2);
               if (chunkTimings[idx]) chunkTimings[idx].ttsReadyT = ttsReadyT;
-              console.log(`[VoiceEngine:Stream] 🔊 TTS chunk ${idx} ready (t=${ttsReadyT}s)`);
-              onEvent?.({ type: "tts-audio", audioPath: ttsResult.output, chunkIndex: idx });
+              console.log(`[VoiceEngine:Stream] 🔊 TTS chunk ${idx} ready (t=${ttsReadyT}s, ${ttsResult.audioBuffer.length} bytes)`);
+              onEvent?.({ type: "tts-audio", audioBuffer: ttsResult.audioBuffer, chunkIndex: idx });
             } else {
               console.warn(`[VoiceEngine:Stream] TTS chunk ${idx} failed:`, ttsResult.error);
-              audioPaths[idx] = null;
+              audioBuffers[idx] = null;
               onEvent?.({ type: "tts-chunk-failed", chunkIndex: idx });
             }
           } catch (err) {
             console.warn(`[VoiceEngine:Stream] TTS chunk ${idx} error:`, err.message);
-            audioPaths[idx] = null;
+            audioBuffers[idx] = null;
             onEvent?.({ type: "tts-chunk-failed", chunkIndex: idx });
           }
           activeTts--;
@@ -638,7 +638,7 @@ export class VoiceConversationEngine {
         success: true,
         transcript: userText,
         responseText,
-        audioPaths: audioPaths.filter(Boolean),
+        audioBuffers: audioBuffers.filter(Boolean),
         chunkCount: chunkIndex,
         timings,
       };

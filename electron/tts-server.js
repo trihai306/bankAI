@@ -279,17 +279,23 @@ class TTSServerManager {
     }
 
     /**
-     * Generate audio via the TTS server HTTP API
+     * Ensure server is ready before making requests
      */
-    async generate({ refAudio, refText, genText, speed = 1.0 }) {
+    async _ensureReady() {
         if (!this.isReady()) {
-            // Auto-start if not running
             console.log("[TTSServer] Not ready, starting server...");
             const startResult = await this.start();
             if (!startResult.success) {
                 throw new Error(`TTS server failed to start: ${startResult.error}`);
             }
         }
+    }
+
+    /**
+     * Generate audio via the TTS server HTTP API (legacy JSON response with file path)
+     */
+    async generate({ refAudio, refText, genText, speed = 1.0 }) {
+        await this._ensureReady();
 
         const body = JSON.stringify({
             ref_audio: refAudio,
@@ -324,6 +330,83 @@ class TTSServerManager {
                             reject(new Error(`Invalid TTS response: ${responseBody}`));
                         }
                     });
+                },
+            );
+
+            req.on("error", (err) => {
+                reject(new Error(`TTS server request failed: ${err.message}`));
+            });
+
+            req.on("timeout", () => {
+                req.destroy();
+                reject(new Error("TTS generation timeout (120s)"));
+            });
+
+            req.write(body);
+            req.end();
+        });
+    }
+
+    /**
+     * Generate audio and receive raw WAV binary buffer (no file I/O)
+     * Returns: { success, audioBuffer: Buffer, timings: { preprocess, generate, total } }
+     */
+    async generateWav({ refAudio, refText, genText, speed = 1.0 }) {
+        await this._ensureReady();
+
+        const body = JSON.stringify({
+            ref_audio: refAudio,
+            ref_text: refText,
+            gen_text: genText,
+            speed,
+            response_format: "wav",
+        });
+
+        return new Promise((resolve, reject) => {
+            const req = http.request(
+                {
+                    hostname: TTS_SERVER_HOST,
+                    port: TTS_SERVER_PORT,
+                    path: "/generate",
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json; charset=utf-8",
+                        "Content-Length": Buffer.byteLength(body, "utf-8"),
+                    },
+                    timeout: 120000,
+                },
+                (res) => {
+                    const contentType = res.headers["content-type"] || "";
+
+                    if (contentType.includes("audio/wav")) {
+                        // Binary WAV response
+                        const chunks = [];
+                        res.on("data", (chunk) => chunks.push(chunk));
+                        res.on("end", () => {
+                            const audioBuffer = Buffer.concat(chunks);
+                            let timings = {};
+                            try {
+                                timings = JSON.parse(res.headers["x-tts-timings"] || "{}");
+                            } catch { /* ignore */ }
+                            resolve({
+                                success: true,
+                                audioBuffer,
+                                timings,
+                            });
+                        });
+                    } else {
+                        // JSON error response
+                        let responseBody = "";
+                        res.on("data", (chunk) => { responseBody += chunk; });
+                        res.on("end", () => {
+                            try {
+                                const result = JSON.parse(responseBody);
+                                resolve({ success: false, error: result.error || "Unknown error" });
+                            } catch {
+                                reject(new Error(`Invalid TTS response: ${responseBody}`));
+                            }
+                        });
+                    }
                 },
             );
 

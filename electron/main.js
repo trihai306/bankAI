@@ -1663,10 +1663,9 @@ ipcMain.handle("voice-chat:process", async (event, audioData, filename) => {
     const engine = getVoiceEngine();
     const result = await engine.processAudioChunk(audioData, filename);
 
-    // If TTS generated audio, read it and send back as buffer
-    if (result.success && result.audioPath && fs.existsSync(result.audioPath)) {
-      const audioBuffer = fs.readFileSync(result.audioPath);
-      result.audioData = Array.from(audioBuffer);
+    // If TTS generated audio, send buffer directly
+    if (result.success && result.audioBuffer) {
+      result.audioData = Array.from(result.audioBuffer);
       result.audioMimeType = "audio/wav";
     }
 
@@ -1693,11 +1692,10 @@ ipcMain.handle("voice-chat:process-stream", async (event, audioData, filename) =
           sender.send("voice-stream:llm-chunk", { text: evt.text, fullText: evt.fullText });
           break;
         case "tts-audio": {
-          // Read audio file and send as buffer
-          if (evt.audioPath && fs.existsSync(evt.audioPath)) {
-            const audioBuf = fs.readFileSync(evt.audioPath);
+          // Send audio buffer directly (no file I/O)
+          if (evt.audioBuffer) {
             sender.send("voice-stream:tts-audio", {
-              audioData: Array.from(audioBuf),
+              audioData: Array.from(evt.audioBuffer),
               chunkIndex: evt.chunkIndex,
               mimeType: "audio/wav",
             });
@@ -1799,10 +1797,9 @@ ipcMain.handle("voice-chat:pick-audio", async (event) => {
           sender.send("voice-stream:llm-chunk", { text: evt.text, fullText: evt.fullText });
           break;
         case "tts-audio": {
-          if (evt.audioPath && fs.existsSync(evt.audioPath)) {
-            const audioBuf = fs.readFileSync(evt.audioPath);
+          if (evt.audioBuffer) {
             sender.send("voice-stream:tts-audio", {
-              audioData: Array.from(audioBuf),
+              audioData: Array.from(evt.audioBuffer),
               chunkIndex: evt.chunkIndex,
               mimeType: "audio/wav",
             });
@@ -1917,10 +1914,9 @@ ipcMain.handle("voice-chat:process-ref-file", async (event, filename) => {
           sender.send("voice-stream:llm-chunk", { text: evt.text, fullText: evt.fullText });
           break;
         case "tts-audio": {
-          if (evt.audioPath && fs.existsSync(evt.audioPath)) {
-            const audioBuf = fs.readFileSync(evt.audioPath);
+          if (evt.audioBuffer) {
             sender.send("voice-stream:tts-audio", {
-              audioData: Array.from(audioBuf),
+              audioData: Array.from(evt.audioBuffer),
               chunkIndex: evt.chunkIndex,
               mimeType: "audio/wav",
             });
@@ -1982,10 +1978,9 @@ ipcMain.handle("voice-chat:process-text", async (event, text) => {
           sender.send("voice-stream:llm-chunk", { text: evt.text, fullText: evt.fullText });
           break;
         case "tts-audio": {
-          if (evt.audioPath && fs.existsSync(evt.audioPath)) {
-            const audioBuf = fs.readFileSync(evt.audioPath);
+          if (evt.audioBuffer) {
             sender.send("voice-stream:tts-audio", {
-              audioData: Array.from(audioBuf),
+              audioData: Array.from(evt.audioBuffer),
               chunkIndex: evt.chunkIndex,
               mimeType: "audio/wav",
             });
