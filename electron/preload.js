@@ -41,12 +41,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     onComplete: (callback) => ipcRenderer.on("model:complete", callback),
   },
 
-  // Training
-  training: {
-    uploadSamples: (files) => ipcRenderer.invoke("training:upload", files),
-    startVoiceTraining: (config) =>
-      ipcRenderer.invoke("training:voice", config),
-    startLLMTraining: (config) => ipcRenderer.invoke("training:llm", config),
+  // Training Data (CRUD)
+  trainingData: {
+    list: () => ipcRenderer.invoke("training-data:list"),
+    create: (data) => ipcRenderer.invoke("training-data:create", data),
+    update: (id, data) => ipcRenderer.invoke("training-data:update", id, data),
+    delete: (id) => ipcRenderer.invoke("training-data:delete", id),
+    upload: (fileData) => ipcRenderer.invoke("training-data:upload", fileData),
   },
 
   // History

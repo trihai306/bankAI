@@ -41,3 +41,4 @@ src/f5_tts/
 release/*
 !release/install.bat
 !release/uninstall.bat
+python/training-data/1772300315469_banking_qa_vietnamese.json

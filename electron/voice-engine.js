@@ -23,8 +23,9 @@ export class VoiceConversationEngine {
 
     this.isActive = false;
     this.voiceConfig = null; // { refAudio, refText, voiceId }
-    this.systemPrompt =
+    this.baseSystemPrompt =
       "Bạn là trợ lý AI ngân hàng thông minh. Trả lời ngắn gọn, rõ ràng bằng tiếng Việt. Chỉ trả lời nội dung, không giải thích thêm.";
+    this.systemPrompt = this.baseSystemPrompt;
     this.conversationHistory = [];
   }
 
@@ -45,14 +46,37 @@ export class VoiceConversationEngine {
     }
 
     if (config.systemPrompt) {
-      this.systemPrompt = config.systemPrompt;
+      this.baseSystemPrompt = config.systemPrompt;
     }
+
+    // Load training data and build system prompt
+    this.loadTrainingData();
 
     console.log("[VoiceEngine] Session started", {
       voice: this.voiceConfig?.voiceName || "none",
+      trainingDataLoaded: this.systemPrompt !== this.baseSystemPrompt,
     });
 
     return { success: true, voice: this.voiceConfig };
+  }
+
+  loadTrainingData() {
+    try {
+      const entries = this.dbAPI.getActiveTrainingData();
+      if (entries && entries.length > 0) {
+        const trainingBlock = entries
+          .map((e) => `### ${e.title}\n${e.content}`)
+          .join("\n\n");
+        this.systemPrompt = `[KIẾN THỨC THAM KHẢO]\n${trainingBlock}\n[/KIẾN THỨC THAM KHẢO]\n\n${this.baseSystemPrompt}`;
+        console.log(`[VoiceEngine] Loaded ${entries.length} training data entries into system prompt`);
+      } else {
+        this.systemPrompt = this.baseSystemPrompt;
+        console.log("[VoiceEngine] No active training data");
+      }
+    } catch (err) {
+      console.warn("[VoiceEngine] Failed to load training data:", err.message);
+      this.systemPrompt = this.baseSystemPrompt;
+    }
   }
 
   stop() {

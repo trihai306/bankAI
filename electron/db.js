@@ -5,7 +5,7 @@ import { app } from "electron";
 let db;
 
 // Current schema version — increment when adding migrations
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 // Migration definitions: each entry runs once when upgrading from (version-1) to (version)
 // Add new migrations at the end of this array
@@ -13,14 +13,25 @@ const MIGRATIONS = [
   // Version 1: baseline schema (runs only for brand new databases)
   // Existing databases that already have tables get version set to 1 automatically
 
-  // --- Add future migrations below ---
-  // {
-  //   version: 2,
-  //   description: "Add language column to voices",
-  //   up: (db) => {
-  //     db.exec(`ALTER TABLE voices ADD COLUMN language TEXT DEFAULT 'vi'`);
-  //   },
-  // },
+  // Version 2: Add training_data table
+  {
+    version: 2,
+    description: "Add training_data table",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS training_data (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          type TEXT DEFAULT 'text',
+          file_path TEXT,
+          is_active INTEGER DEFAULT 1,
+          created_at TEXT DEFAULT (datetime('now', 'localtime')),
+          updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+        )
+      `);
+    },
+  },
 ];
 
 function getSchemaVersion() {
@@ -132,6 +143,17 @@ export function initDB() {
             name TEXT NOT NULL,
             audio_path TEXT NOT NULL,
             transcript TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS training_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            type TEXT DEFAULT 'text',
+            file_path TEXT,
+            is_active INTEGER DEFAULT 1,
             created_at TEXT DEFAULT (datetime('now', 'localtime')),
             updated_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
@@ -309,5 +331,41 @@ export const dbAPI = {
   deleteVoice: (id) => {
     db.prepare("DELETE FROM voices WHERE id = ?").run(id);
     return true;
+  },
+
+  // Training Data CRUD
+  getTrainingData: () => {
+    return db.prepare("SELECT * FROM training_data ORDER BY created_at DESC").all();
+  },
+
+  getActiveTrainingData: () => {
+    return db.prepare("SELECT * FROM training_data WHERE is_active = 1 ORDER BY created_at DESC").all();
+  },
+
+  createTrainingData: ({ title, content, type, file_path }) => {
+    const stmt = db.prepare(
+      "INSERT INTO training_data (title, content, type, file_path) VALUES (?, ?, ?, ?)",
+    );
+    const result = stmt.run(title, content, type || "text", file_path || null);
+    return db.prepare("SELECT * FROM training_data WHERE id = ?").get(result.lastInsertRowid);
+  },
+
+  updateTrainingData: (id, { title, content, is_active }) => {
+    const fields = [];
+    const values = [];
+    if (title !== undefined) { fields.push("title = ?"); values.push(title); }
+    if (content !== undefined) { fields.push("content = ?"); values.push(content); }
+    if (is_active !== undefined) { fields.push("is_active = ?"); values.push(is_active ? 1 : 0); }
+    if (fields.length === 0) return false;
+    fields.push("updated_at = datetime('now', 'localtime')");
+    values.push(id);
+    db.prepare(`UPDATE training_data SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+    return db.prepare("SELECT * FROM training_data WHERE id = ?").get(id);
+  },
+
+  deleteTrainingData: (id) => {
+    const entry = db.prepare("SELECT * FROM training_data WHERE id = ?").get(id);
+    db.prepare("DELETE FROM training_data WHERE id = ?").run(id);
+    return entry;
   },
 };

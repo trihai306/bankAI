@@ -199,6 +199,72 @@ ipcMain.handle("db:save-setting", (_, { key, value }) =>
   dbAPI.saveSetting(key, value),
 );
 
+// Training Data IPC (CRUD)
+const TRAINING_DATA_DIR = path.join(PYTHON_DIR, "training-data");
+if (!fs.existsSync(TRAINING_DATA_DIR)) {
+  fs.mkdirSync(TRAINING_DATA_DIR, { recursive: true });
+}
+
+ipcMain.handle("training-data:list", () => dbAPI.getTrainingData());
+
+ipcMain.handle("training-data:create", async (_, data) => {
+  try {
+    const entry = dbAPI.createTrainingData({
+      title: data.title,
+      content: data.content,
+      type: data.type || "text",
+      file_path: data.file_path || null,
+    });
+    return { success: true, entry };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("training-data:update", async (_, id, data) => {
+  try {
+    const entry = dbAPI.updateTrainingData(id, data);
+    if (!entry) return { success: false, error: "Not found" };
+    return { success: true, entry };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("training-data:delete", async (_, id) => {
+  try {
+    const deleted = dbAPI.deleteTrainingData(id);
+    // Cleanup uploaded file if exists
+    if (deleted?.file_path && fs.existsSync(deleted.file_path)) {
+      try { fs.unlinkSync(deleted.file_path); } catch { }
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("training-data:upload", async (_, { fileData, filename }) => {
+  try {
+    const destPath = path.join(TRAINING_DATA_DIR, `${Date.now()}_${filename}`);
+    const buffer = Buffer.from(fileData);
+    fs.writeFileSync(destPath, buffer);
+
+    // Read content from text-based files
+    const ext = path.extname(filename).toLowerCase();
+    let content = "";
+    if ([".txt", ".md", ".csv", ".json", ".jsonl"].includes(ext)) {
+      content = fs.readFileSync(destPath, "utf-8");
+    } else {
+      content = `[Binary file: ${filename}]`;
+    }
+
+    return { success: true, path: destPath, content, filename };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 // Voice Management IPC (CRUD)
 ipcMain.handle("voice:list", () => dbAPI.getVoices());
 ipcMain.handle("voice:get", (_, id) => dbAPI.getVoice(id));
