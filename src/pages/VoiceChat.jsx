@@ -11,7 +11,6 @@ export default function VoiceChat() {
     const [pipelineStep, setPipelineStep] = useState(null) // stt | llm | tts | done
     const [messages, setMessages] = useState([])
     const [voices, setVoices] = useState([])
-    const [selectedVoiceId, setSelectedVoiceId] = useState('')
     const [volumeLevel, setVolumeLevel] = useState(0)
     const [isSilent, setIsSilent] = useState(false)
     const [error, setError] = useState(null)
@@ -32,11 +31,11 @@ export default function VoiceChat() {
     const animFrameRef = useRef(null)
     const isProcessingRef = useRef(false)
     const audioPlayerRef = useRef(null)
+    const activeStreamRef = useRef(null)  // tracks current stream handler for abort
     const isProcessingRefAudio = useRef(false)
 
     // Load voices on mount
     useEffect(() => {
-        loadVoices()
         loadRefAudios()
         return () => {
             stopListening()
@@ -61,9 +60,10 @@ export default function VoiceChat() {
         let totalChunks = 0     // total expected chunks (set when done)
         let playbackResolve = null
         let isPlaying = false
+        let aborted = false     // cancels all pending callbacks when session ends
 
         const tryPlayNext = () => {
-            if (isPlaying) return  // already playing something
+            if (aborted || isPlaying) return
 
             // Skip over failed/skipped chunks
             while (nextPlayIndex < audioQueue.length && audioQueue[nextPlayIndex] === 'skipped') {
@@ -79,17 +79,27 @@ export default function VoiceChat() {
                 const blob = new Blob([uint8], { type: mimeType })
                 const url = URL.createObjectURL(blob)
 
+                // Stop any currently playing audio before starting new one
                 if (audioPlayerRef.current) {
+                    audioPlayerRef.current.onended = null
+                    audioPlayerRef.current.onerror = null
                     audioPlayerRef.current.pause()
+                    audioPlayerRef.current.src = ''
+                    audioPlayerRef.current = null
                 }
 
                 const audio = new Audio(url)
                 audioPlayerRef.current = audio
 
                 const onFinish = () => {
+                    audio.onended = null
+                    audio.onerror = null
                     URL.revokeObjectURL(url)
+                    if (audioPlayerRef.current === audio) {
+                        audioPlayerRef.current = null
+                    }
                     isPlaying = false
-                    tryPlayNext()
+                    if (!aborted) tryPlayNext()
                 }
 
                 audio.onended = onFinish
@@ -106,8 +116,12 @@ export default function VoiceChat() {
         }
 
         const registerListeners = () => {
+            // ALWAYS clean up old listeners before registering new ones
+            window.electronAPI.voiceChat.removeStreamListeners()
+
             window.electronAPI.voiceChat.onStreamEvent({
                 onSttDone: (data) => {
+                    if (aborted) return
                     setMessages(prev => [
                         ...prev,
                         { role: 'user', content: data.transcript, timestamp: Date.now() },
@@ -115,6 +129,7 @@ export default function VoiceChat() {
                     setPipelineStep('llm')
                 },
                 onLlmChunk: (data) => {
+                    if (aborted) return
                     setPipelineStep('tts')
                     setMessages(prev => {
                         const last = prev[prev.length - 1]
@@ -131,6 +146,7 @@ export default function VoiceChat() {
                     })
                 },
                 onTtsAudio: (data) => {
+                    if (aborted) return
                     setPipelineStep('playing')
                     audioQueue[data.chunkIndex] = {
                         audioData: data.audioData,
@@ -139,11 +155,12 @@ export default function VoiceChat() {
                     tryPlayNext()
                 },
                 onTtsChunkFailed: (data) => {
-                    // Mark as skipped so playback doesn't wait forever
+                    if (aborted) return
                     audioQueue[data.chunkIndex] = 'skipped'
                     tryPlayNext()
                 },
                 onDone: (data) => {
+                    if (aborted) return
                     streamDone = true
                     totalChunks = data.chunkCount || audioQueue.length
                     setMessages(prev => {
@@ -165,14 +182,30 @@ export default function VoiceChat() {
         const waitForPlayback = () => {
             return new Promise(resolve => {
                 playbackResolve = resolve
-                // Check if already done (no audio chunks at all, or all played)
-                if (streamDone && (totalChunks === 0 || nextPlayIndex >= totalChunks)) {
+                if (aborted || (streamDone && (totalChunks === 0 || nextPlayIndex >= totalChunks))) {
                     resolve()
                 }
             })
         }
 
-        return { registerListeners, waitForPlayback }
+        const abort = () => {
+            aborted = true
+            // Resolve waitForPlayback if still pending
+            if (playbackResolve) {
+                playbackResolve()
+                playbackResolve = null
+            }
+            // Stop currently playing audio from this session
+            if (audioPlayerRef.current) {
+                audioPlayerRef.current.onended = null
+                audioPlayerRef.current.onerror = null
+                audioPlayerRef.current.pause()
+                audioPlayerRef.current.src = ''
+                audioPlayerRef.current = null
+            }
+        }
+
+        return { registerListeners, waitForPlayback, abort }
     }
 
     const processRefAudio = async (filename) => {
@@ -181,12 +214,14 @@ export default function VoiceChat() {
         isProcessingRef.current = true
         setIsProcessing(true)
 
-        const { registerListeners, waitForPlayback } = createStreamHandler()
+        // Abort any previous session before starting new one
+        if (activeStreamRef.current) activeStreamRef.current.abort()
+        const { registerListeners, waitForPlayback, abort } = createStreamHandler()
+        activeStreamRef.current = { abort }
 
         try {
             if (!isListening) {
                 await window.electronAPI.voiceChat.start({
-                    voiceId: selectedVoiceId || undefined,
                 })
             }
 
@@ -206,6 +241,8 @@ export default function VoiceChat() {
             console.error('Ref audio processing error:', err)
             setError(`Processing failed: ${err.message}`)
         } finally {
+            abort()
+            activeStreamRef.current = null
             window.electronAPI.voiceChat.removeStreamListeners()
             isProcessingRef.current = false
             setIsProcessing(false)
@@ -252,24 +289,13 @@ export default function VoiceChat() {
         }
     }
 
-    const loadVoices = async () => {
-        try {
-            const list = await window.electronAPI.voices.list()
-            setVoices(list || [])
-            if (list?.length > 0 && !selectedVoiceId) {
-                setSelectedVoiceId(list[0].id)
-            }
-        } catch (err) {
-            console.error('Failed to load voices:', err)
-        }
-    }
+
 
     const startListening = async () => {
         setError(null)
         try {
             // Start voice engine session
             await window.electronAPI.voiceChat.start({
-                voiceId: selectedVoiceId || undefined,
             })
 
             // Get mic stream
@@ -414,7 +440,10 @@ export default function VoiceChat() {
         chunksRef.current = []
         silenceStartRef.current = null
 
-        const { registerListeners, waitForPlayback } = createStreamHandler()
+        // Abort any previous session
+        if (activeStreamRef.current) activeStreamRef.current.abort()
+        const { registerListeners, waitForPlayback, abort } = createStreamHandler()
+        activeStreamRef.current = { abort }
 
         try {
             // Convert WebM chunks to a single blob
@@ -447,6 +476,8 @@ export default function VoiceChat() {
             setError(`Processing failed: ${err.message}`)
         } finally {
             // Cleanup stream listeners
+            abort()
+            activeStreamRef.current = null
             window.electronAPI.voiceChat.removeStreamListeners()
             isProcessingRef.current = false
             setIsProcessing(false)
@@ -527,13 +558,15 @@ export default function VoiceChat() {
         isProcessingRef.current = true
         setIsProcessing(true)
 
-        const { registerListeners, waitForPlayback } = createStreamHandler()
+        // Abort any previous session
+        if (activeStreamRef.current) activeStreamRef.current.abort()
+        const { registerListeners, waitForPlayback, abort } = createStreamHandler()
+        activeStreamRef.current = { abort }
 
         try {
             // Start voice engine if not active
             if (!isListening) {
                 await window.electronAPI.voiceChat.start({
-                    voiceId: selectedVoiceId || undefined,
                 })
             }
 
@@ -557,6 +590,8 @@ export default function VoiceChat() {
             console.error('Pick audio error:', err)
             setError(`Processing failed: ${err.message}`)
         } finally {
+            abort()
+            activeStreamRef.current = null
             window.electronAPI.voiceChat.removeStreamListeners()
             isProcessingRef.current = false
             setIsProcessing(false)
@@ -578,13 +613,24 @@ export default function VoiceChat() {
         setIsProcessing(true)
         setTextInput('')
 
-        const { registerListeners, waitForPlayback } = createStreamHandler()
+        // Stop any currently playing audio from previous session
+        if (audioPlayerRef.current) {
+            audioPlayerRef.current.onended = null
+            audioPlayerRef.current.onerror = null
+            audioPlayerRef.current.pause()
+            audioPlayerRef.current.src = ''
+            audioPlayerRef.current = null
+        }
+
+        // Abort any previous session
+        if (activeStreamRef.current) activeStreamRef.current.abort()
+        const { registerListeners, waitForPlayback, abort } = createStreamHandler()
+        activeStreamRef.current = { abort }
 
         try {
             // Ensure voice engine is started (with selected voice for TTS)
             if (!isListening) {
                 await window.electronAPI.voiceChat.start({
-                    voiceId: selectedVoiceId || undefined,
                 })
             }
 
@@ -604,6 +650,8 @@ export default function VoiceChat() {
             console.error('Text processing error:', err)
             setError(`Processing failed: ${err.message}`)
         } finally {
+            abort()
+            activeStreamRef.current = null
             window.electronAPI.voiceChat.removeStreamListeners()
             isProcessingRef.current = false
             setIsProcessing(false)
@@ -626,7 +674,7 @@ export default function VoiceChat() {
         const steps = [
             { key: 'stt', label: 'Whisper STT', icon: '🎤' },
             { key: 'llm', label: 'Llama AI', icon: '🤖' },
-            { key: 'tts', label: 'F5-TTS', icon: '🔊' },
+            { key: 'tts', label: 'VieNeu-TTS', icon: '🔊' },
             { key: 'playing', label: 'Phát âm', icon: '▶️' },
         ]
         return steps
@@ -641,18 +689,7 @@ export default function VoiceChat() {
                     <p className="text-slate-400 mt-1">Trò chuyện bằng giọng nói với AI</p>
                 </div>
                 <div className="flex items-center gap-3">
-                    {/* Voice Selector */}
-                    <select
-                        value={selectedVoiceId}
-                        onChange={(e) => setSelectedVoiceId(e.target.value)}
-                        disabled={isListening}
-                        className="px-3 py-2 rounded-lg bg-white/[0.05] border border-white/10 text-sm text-white focus:outline-none focus:border-cyan-500/50 disabled:opacity-50"
-                    >
-                        <option value="">Không dùng TTS</option>
-                        {voices.map(v => (
-                            <option key={v.id} value={v.id}>{v.name}</option>
-                        ))}
-                    </select>
+                    {/* VieNeu-TTS merged model — no voice selection needed */}
                 </div>
             </div>
 

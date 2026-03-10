@@ -4,7 +4,7 @@ import os from "os";
 
 /**
  * Reusable Voice Conversation Engine
- * Pipeline: Audio → Whisper STT → Llama LLM → F5-TTS → Audio Response
+ * Pipeline: Audio → Whisper STT → Llama LLM → VieNeu-TTS → Audio Response
  *
  * Designed for reuse across VoiceChat (mic) and future PhoneCall (SIP) features.
  */
@@ -24,7 +24,7 @@ export class VoiceConversationEngine {
     this.isActive = false;
     this.voiceConfig = null; // { refAudio, refText, voiceId }
     this.baseSystemPrompt =
-      "Bạn là trợ lý AI ngân hàng thông minh. Trả lời ngắn gọn, rõ ràng bằng tiếng Việt. Chỉ trả lời nội dung, không giải thích thêm.";
+      "Bạn là trợ lý AI ngân hàng thông minh. Trả lời ngắn gọn, rõ ràng bằng tiếng Việt. Chỉ trả lời nội dung, không giải thích thêm. /no_think";
     this.systemPrompt = this.baseSystemPrompt;
     this.conversationHistory = [];
   }
@@ -169,32 +169,30 @@ export class VoiceConversationEngine {
         { role: "assistant", content: responseText },
       );
 
-      // Step 4: F5-TTS via persistent server (model stays in GPU memory)
+      // Step 4: VieNeu-TTS via persistent server (model stays in memory)
       let audioBuffer = null;
-      if (this.voiceConfig?.refAudio) {
-        stepStart = performance.now();
-        console.log("[VoiceEngine] Step 4: F5-TTS (persistent server)...");
-        try {
-          const ttsResult = await this.ttsServer.generateWav({
-            refAudio: this.voiceConfig.refAudio,
-            refText: this.voiceConfig.refText || "",
-            genText: responseText,
-            speed: 1.0,
-          });
-          timings.tts = performance.now() - stepStart;
+      stepStart = performance.now();
+      console.log("[VoiceEngine] Step 4: VieNeu-TTS (persistent server)...");
+      try {
+        const ttsResult = await this.ttsServer.generateWav({
+          refAudio: this.voiceConfig?.refAudio || "",
+          refText: this.voiceConfig?.refText || "",
+          genText: responseText,
+          speed: 1.0,
+        });
+        timings.tts = performance.now() - stepStart;
 
-          if (ttsResult.success) {
-            audioBuffer = ttsResult.audioBuffer;
-            const serverTimings = ttsResult.timings || {};
-            console.log(`[VoiceEngine] ⏱ Step 4 (TTS): ${(timings.tts / 1000).toFixed(2)}s (server: preprocess=${serverTimings.preprocess}s, generate=${serverTimings.generate}s)`);
-            console.log(`[VoiceEngine] TTS audio: ${audioBuffer.length} bytes`);
-          } else {
-            console.warn(`[VoiceEngine] ⏱ Step 4 (TTS) FAILED after ${(timings.tts / 1000).toFixed(2)}s:`, ttsResult.error);
-          }
-        } catch (ttsErr) {
-          timings.tts = performance.now() - stepStart;
-          console.warn(`[VoiceEngine] ⏱ Step 4 (TTS) ERROR after ${(timings.tts / 1000).toFixed(2)}s:`, ttsErr.message);
+        if (ttsResult.success) {
+          audioBuffer = ttsResult.audioBuffer;
+          const serverTimings = ttsResult.timings || {};
+          console.log(`[VoiceEngine] ⏱ Step 4 (TTS): ${(timings.tts / 1000).toFixed(2)}s (server: preprocess=${serverTimings.preprocess}s, generate=${serverTimings.generate}s)`);
+          console.log(`[VoiceEngine] TTS audio: ${audioBuffer.length} bytes`);
+        } else {
+          console.warn(`[VoiceEngine] ⏱ Step 4 (TTS) FAILED after ${(timings.tts / 1000).toFixed(2)}s:`, ttsResult.error);
         }
+      } catch (ttsErr) {
+        timings.tts = performance.now() - stepStart;
+        console.warn(`[VoiceEngine] ⏱ Step 4 (TTS) ERROR after ${(timings.tts / 1000).toFixed(2)}s:`, ttsErr.message);
       }
 
       // Pipeline summary
@@ -295,7 +293,7 @@ export class VoiceConversationEngine {
       const ttsPromises = [];
       const chunkTimings = [];  // { idx, flushT, ttsReadyT, text }
 
-      const MAX_TTS_CONCURRENT = 3;
+      const MAX_TTS_CONCURRENT = 2;
       let activeTts = 0;
       const ttsPending = [];
 
@@ -304,8 +302,8 @@ export class VoiceConversationEngine {
           activeTts++;
           try {
             const ttsResult = await this.ttsServer.generateWav({
-              refAudio: this.voiceConfig.refAudio,
-              refText: this.voiceConfig.refText || "",
+              refAudio: this.voiceConfig?.refAudio || "",
+              refText: this.voiceConfig?.refText || "",
               genText: text,
               speed: 1.0,
             });
@@ -357,7 +355,7 @@ export class VoiceConversationEngine {
         console.log(`[VoiceEngine:Text] 📝 Chunk ${idx}: "${trimmed}" → TTS fired (t=${flushT}s)`);
         onEvent?.({ type: "llm-chunk", text: trimmed, fullText: fullResponseText });
 
-        if (this.voiceConfig?.refAudio) {
+        if (trimmed.length >= 2) {
           startTtsTask(idx, trimmed);
         }
       };
@@ -511,8 +509,8 @@ export class VoiceConversationEngine {
       const ttsPromises = [];   // all TTS promises for final await
       const chunkTimings = [];  // { idx, flushT, ttsReadyT, text }
 
-      // Concurrency-limited parallel TTS pool (F5-TTS can't handle too many connections)
-      const MAX_TTS_CONCURRENT = 3;
+      // Concurrency-limited parallel TTS pool
+      const MAX_TTS_CONCURRENT = 2;
       let activeTts = 0;
       const ttsPending = [];    // overflow queue when at max concurrency
 
@@ -521,8 +519,8 @@ export class VoiceConversationEngine {
           activeTts++;
           try {
             const ttsResult = await this.ttsServer.generateWav({
-              refAudio: this.voiceConfig.refAudio,
-              refText: this.voiceConfig.refText || "",
+              refAudio: this.voiceConfig?.refAudio || "",
+              refText: this.voiceConfig?.refText || "",
               genText: text,
               speed: 1.0,
             });
@@ -578,7 +576,7 @@ export class VoiceConversationEngine {
         onEvent?.({ type: "llm-chunk", text: trimmed, fullText: fullResponseText });
 
         // Fire TTS (parallel, concurrency-limited)
-        if (this.voiceConfig?.refAudio) {
+        if (trimmed.length >= 2) {
           startTtsTask(idx, trimmed);
         }
       };

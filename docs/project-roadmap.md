@@ -4,19 +4,22 @@
 - [x] Basic Electron + React + Vite setup.
 - [x] SQLite database integration.
 - [x] Python subprocess spawning infrastructure.
-- [x] Whisper STT integration (transcribe.py).
-- [x] F5-TTS Vietnamese voice cloning integration (f5_tts.py).
-- [x] Ollama/Qwen LLM integration.
+- [x] Whisper STT integration (nodejs-whisper / whisper.cpp native).
+- [x] VieNeu-TTS Vietnamese voice synthesis (persistent FastAPI server).
+- [x] Qwen3 LLM integration via node-llama-cpp (local GGUF).
 
 ## Phase 2: UI & UX Refinement (Completed)
 - [x] Custom Tailwind theme (purple/violet).
 - [x] Glassmorphism layout & animations.
-- [x] Voice training workflow UI.
-- [x] Dashboard with stats and resource usage (mocked data).
+- [x] Voice management workflow UI (VoiceCreate).
+- [x] Dashboard with stats and resource usage.
 - [x] History page with transcript playback.
 
 ## Phase 3: Robustness & Reliability (Current)
-- [ ] Improved error handling for AI subprocesses.
+- [x] Persistent whisper-server (model loaded once, reused).
+- [x] Persistent VieNeu-TTS server (FastAPI on port 8179).
+- [x] Realtime voice conversation pipeline (VoiceChat).
+- [x] LoRA fine-tuning support for custom voices.
 - [ ] Real resource monitoring (CPU/GPU/RAM).
 - [ ] Better model lifecycle management (downloads/updates).
 - [ ] Automated testing for IPC and Python scripts.

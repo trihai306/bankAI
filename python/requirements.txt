@@ -6,11 +6,14 @@ torch>=2.8.0,<2.9.0
 torchaudio>=2.8.0,<2.9.0
 torchvision>=0.23.0,<0.24.0
 
-# F5-TTS dependencies (installed separately via pip install -e)
-# These are common deps that F5-TTS needs
+# VieNeu-TTS dependencies (VieNeu-TTS itself installed via pip install -e)
 soundfile>=0.13.0
 librosa>=0.10.2
-numpy>=1.24.0,<=1.26.4  # F5-TTS requires numpy<=1.26.4
+numpy>=1.24.0,<=1.26.4  # VieNeu-TTS requires numpy<=1.26.4
+
+# TTS Server (FastAPI)
+fastapi>=0.115.0
+uvicorn>=0.34.0
 
 # Utilities
 jieba>=0.42.1

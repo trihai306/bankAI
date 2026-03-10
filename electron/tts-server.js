@@ -1,9 +1,9 @@
 /**
- * F5-TTS Server Manager
+ * VieNeu-TTS Server Manager
  *
- * Manages a persistent Python F5-TTS server process.
- * Keeps the model loaded in GPU memory so subsequent TTS calls are fast
- * (no re-loading the ~1.5GB model on every call).
+ * Manages a persistent Python VieNeu-TTS server process.
+ * Keeps the model loaded in memory so subsequent TTS calls are fast
+ * (no re-loading the model on every call).
  *
  * API: HTTP POST /generate with JSON body.
  */
@@ -32,18 +32,19 @@ class TTSServerManager {
     }
 
     /**
-     * Get Python paths for TTS server
+     * Get Python paths for VieNeu-TTS server
      */
     _getPaths() {
         const pythonDir = getPythonDir();
         const isWindows = process.platform === "win32";
-        const venvDir = path.join(pythonDir, "venv");
+        const vieneuDir = path.join(pythonDir, "VieNeu-TTS");
+        const venvDir = path.join(vieneuDir, ".venv");
 
         return {
             python: isWindows
-                ? path.join(venvDir, "python.exe")
+                ? path.join(venvDir, "Scripts", "python.exe")
                 : path.join(venvDir, "bin", "python"),
-            serverScript: path.join(pythonDir, "f5_tts_server.py"),
+            serverScript: path.join(pythonDir, "vieneu_tts_server.py"),
             pythonDir,
         };
     }
@@ -74,13 +75,13 @@ class TTSServerManager {
 
         if (!fs.existsSync(python)) {
             this.status = "error";
-            this.error = "Python venv not found: " + python;
+            this.error = "VieNeu-TTS Python venv not found: " + python;
             return { success: false, error: this.error };
         }
 
         if (!fs.existsSync(serverScript)) {
             this.status = "error";
-            this.error = "TTS server script not found: " + serverScript;
+            this.error = "VieNeu-TTS server script not found: " + serverScript;
             return { success: false, error: this.error };
         }
 
@@ -112,7 +113,7 @@ class TTSServerManager {
                     resolved = true;
                     this.status = "ready";
                     this._restartCount = 0;
-                    console.log("[TTSServer] Server is ready — model loaded in GPU memory");
+                    console.log("[TTSServer] Server is ready — VieNeu-TTS model loaded");
                     resolve({ success: true, status: "ready" });
                 }
             };
@@ -176,13 +177,13 @@ class TTSServerManager {
                     return;
                 }
 
-                // Timeout after 120 seconds (model loading can be slow first time)
-                if (Date.now() - startTime > 120000) {
+                // Timeout after 180 seconds (FAST mode with LMDeploy can take ~95s)
+                if (Date.now() - startTime > 180000) {
                     clearInterval(pollReady);
                     if (!resolved) {
                         resolved = true;
                         this.status = "error";
-                        this.error = "TTS server startup timeout (120s)";
+                        this.error = "TTS server startup timeout (180s)";
                         resolve({ success: false, error: this.error });
                     }
                     return;
@@ -282,12 +283,36 @@ class TTSServerManager {
      * Ensure server is ready before making requests
      */
     async _ensureReady() {
-        if (!this.isReady()) {
-            console.log("[TTSServer] Not ready, starting server...");
-            const startResult = await this.start();
-            if (!startResult.success) {
-                throw new Error(`TTS server failed to start: ${startResult.error}`);
+        if (this.isReady()) {
+            return; // Already ready
+        }
+
+        // If server is currently starting, wait for it
+        if (this.startPromise) {
+            console.log("[TTSServer] Server is starting, waiting...");
+            const result = await this.startPromise;
+            if (!result || !result.success) {
+                throw new Error(`TTS server failed to start: ${result?.error || 'unknown'}`);
             }
+            return;
+        }
+
+        // If process is alive but not ready yet (status=starting), wait via polling
+        if (this.status === "starting" && this.process && !this.process.killed) {
+            console.log("[TTSServer] Server process is loading, waiting for ready...");
+            const startWait = Date.now();
+            while (Date.now() - startWait < 180000) {
+                if (this.isReady()) return;
+                await new Promise(r => setTimeout(r, 2000));
+            }
+            throw new Error("TTS server startup timeout while waiting");
+        }
+
+        // Server is stopped or errored, start fresh
+        console.log("[TTSServer] Not ready, starting server...");
+        const startResult = await this.start();
+        if (!startResult.success) {
+            throw new Error(`TTS server failed to start: ${startResult.error}`);
         }
     }
 

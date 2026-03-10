@@ -13,45 +13,45 @@ graph TD
     subgraph "Main Process (Node.js)"
         IPC[IPC Handlers]
         DB[(SQLite)]
-        Sub[Subprocess Spawn]
-        Edge[Edge TTS Client]
-        Ollama[Ollama API Client]
+        WhisperSrv[Whisper Server]
+        LLM[node-llama-cpp Worker]
+        TTSClient[TTS Server Client]
     end
 
     subgraph "External/Subprocesses"
-        Python[Python: F5-TTS / Whisper]
-        OL[Ollama Server: Qwen]
-        Cloud[Edge TTS Cloud]
+        WhisperCpp[whisper.cpp Native]
+        Qwen[Qwen3 4B GGUF]
+        VieNeu[VieNeu-TTS Server :8179]
     end
 
     UI --> Store
     Store --> API
     API <== IPC ==> IPC
     IPC --> DB
-    IPC --> Sub
-    IPC --> Edge
-    IPC --> Ollama
-    Sub --> Python
-    Edge --> Cloud
-    Ollama --> OL
+    IPC --> WhisperSrv
+    IPC --> LLM
+    IPC --> TTSClient
+    WhisperSrv --> WhisperCpp
+    LLM --> Qwen
+    TTSClient -->|HTTP| VieNeu
 ```
 
 ## IPC Design
 Namespaced communication via `contextBridge`:
-- `db`: Database access (stats, history, settings).
-- `voice`: Recording control (start/stop).
-- `call`: Call lifecycle (dial, hangup).
-- `model`: Model management (list, install).
-- `tts`: Voice cloning and generation.
-- `qwen`: LLM processing (text correction/extraction).
+- `db`: Database access (stats, history, settings, voices).
+- `voices`: Voice profile CRUD (create, update, delete, list).
+- `tts`: Voice generation and audio utilities.
+- `qwen`: LLM processing via node-llama-cpp (text correction/extraction).
+- `voice-chat`: Realtime voice conversation pipeline (STT → LLM → TTS streaming).
+- `preload`: Model preloading and status management.
 
 ## Data Flow
 1. **User records audio** -> Frontend sends WebM blob to Main.
 2. **Main converts WebM to WAV** via ffmpeg.
-3. **Main spawns `transcribe.py`** (Whisper) -> returns JSON text.
-4. **Main sends text to Ollama** (Qwen) for correction/intent.
-5. **Main spawns `f5_tts.py`** (F5-TTS) for response voice generation.
-6. **Frontend plays generated WAV**.
+3. **Whisper Server transcribes** (persistent whisper.cpp process) -> returns text.
+4. **node-llama-cpp processes text** (Qwen3 4B) for correction/response.
+5. **TTS Server generates speech** (VieNeu-TTS FastAPI on port 8179) -> returns WAV binary or SSE streaming.
+6. **Frontend plays generated WAV** via AudioContext.
 
 ## Security Model
 - **Context Isolation**: Enabled.
@@ -62,5 +62,6 @@ Namespaced communication via `contextBridge`:
 ## Database Schema (SQLite)
 - `settings`: Key-value store for app configuration.
 - `calls`: History of calls (id, time, duration, status, transcript, audio_path).
-- `models`: Registry of local/cloned models (id, name, type, path, status).
+- `voices`: Voice profiles (id, name, audio_path, transcript).
+- `training_data`: Banking domain knowledge entries.
 - **WAL Mode**: Enabled for high-performance concurrent reads/writes.

@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VieNeu-TTS LoRA — Test UI</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f0f13;
+            --surface: #1a1a24;
+            --surface2: #222233;
+            --border: #2d2d44;
+            --text: #e4e4ef;
+            --text-dim: #8888aa;
+            --accent: #6c5ce7;
+            --accent-glow: rgba(108, 92, 231, 0.25);
+            --success: #00cec9;
+            --warning: #fdcb6e;
+            --danger: #ff7675;
+            --radius: 12px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--surface), var(--surface2));
+            border-bottom: 1px solid var(--border);
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent), #a29bfe);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: rgba(108, 92, 231, 0.2);
+            color: var(--accent);
+            border: 1px solid rgba(108, 92, 231, 0.4);
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--text-dim);
+            transition: background 0.3s;
+        }
+
+        .status-dot.ready {
+            background: var(--success);
+            box-shadow: 0 0 8px rgba(0, 206, 201, 0.5);
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.error {
+            background: var(--danger);
+            box-shadow: 0 0 8px rgba(255, 118, 117, 0.5);
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.6;
+            }
+        }
+
+        .status-text {
+            font-size: 13px;
+            color: var(--text-dim);
+        }
+
+        .main {
+            display: grid;
+            grid-template-columns: 1fr 360px;
+            gap: 20px;
+            padding: 20px 24px;
+            flex: 1;
+            max-height: calc(100vh - 70px);
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 14px 18px;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: var(--text-dim);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-body {
+            padding: 18px;
+        }
+
+        .left-col {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            overflow-y: auto;
+        }
+
+        .text-area {
+            width: 100%;
+            min-height: 140px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            padding: 14px;
+            resize: vertical;
+            transition: border-color 0.2s;
+        }
+
+        .text-area:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        .text-area::placeholder {
+            color: var(--text-dim);
+        }
+
+        .presets {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 10px;
+        }
+
+        .preset-btn {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .preset-btn:hover {
+            border-color: var(--accent);
+            color: var(--text);
+            background: rgba(108, 92, 231, 0.1);
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .btn {
+            padding: 14px 28px;
+            border: none;
+            border-radius: 8px;
+            font-family: 'Inter', sans-serif;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), #a29bfe);
+            color: white;
+            flex: 1;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px var(--accent-glow);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: var(--surface2);
+            color: var(--text-dim);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--accent);
+            color: var(--text);
+        }
+
+        .spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            display: none;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .btn-primary.loading .spinner {
+            display: block;
+        }
+
+        .btn-primary.loading .btn-text {
+            display: none;
+        }
+
+        .player-wrap {
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .player-wrap audio {
+            width: 100%;
+            height: 40px;
+            border-radius: 6px;
+        }
+
+        .player-info {
+            margin-top: 10px;
+            font-size: 12px;
+            color: var(--text-dim);
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .player-info span {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .player-info .val {
+            color: var(--success);
+            font-family: monospace;
+        }
+
+        .right-col {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .log-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 14px;
+            font-size: 12px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            line-height: 1.6;
+            background: var(--bg);
+            border-radius: 0 0 var(--radius) var(--radius);
+        }
+
+        .log-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(45, 45, 68, 0.4);
+        }
+
+        .log-time {
+            color: var(--text-dim);
+            margin-right: 8px;
+        }
+
+        .log-info {
+            color: var(--text);
+        }
+
+        .log-success {
+            color: var(--success);
+        }
+
+        .log-warning {
+            color: var(--warning);
+        }
+
+        .log-error {
+            color: var(--danger);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-dim);
+        }
+
+        .empty-state .icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+            opacity: 0.4;
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+
+        .model-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .mi {
+            font-size: 12px;
+            padding: 6px 0;
+        }
+
+        .mi .label {
+            color: var(--text-dim);
+            margin-bottom: 2px;
+        }
+
+        .mi .value {
+            color: var(--text);
+            font-family: monospace;
+            font-size: 11px;
+        }
+
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 6px;
+        }
+
+        .toggle {
+            width: 40px;
+            height: 22px;
+            background: var(--border);
+            border-radius: 11px;
+            cursor: pointer;
+            position: relative;
+            transition: background 0.2s;
+        }
+
+        .toggle.active {
+            background: var(--accent);
+        }
+
+        .toggle::after {
+            content: '';
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: white;
+            top: 3px;
+            left: 3px;
+            transition: transform 0.2s;
+        }
+
+        .toggle.active::after {
+            transform: translateX(18px);
+        }
+    </style>
+</head>
+
+<body>
+
+    <header class="header">
+        <div class="header-left">
+            <span class="logo">🦜 VieNeu-TTS</span>
+            <span class="badge" id="loraBadge">LoRA</span>
+        </div>
+        <div class="header-right">
+            <div class="status-dot" id="statusDot"></div>
+            <span class="status-text" id="statusText">Connecting...</span>
+        </div>
+    </header>
+
+    <div class="main">
+        <div class="left-col">
+            <!-- Text Input -->
+            <div class="card">
+                <div class="card-header">✏️ Text Input</div>
+                <div class="card-body">
+                    <textarea id="genText" class="text-area"
+                        placeholder="Nhập văn bản tiếng Việt...">Xin chào, tôi là trợ lý AI ngân hàng. Tôi có thể giúp gì cho bạn hôm nay?</textarea>
+                    <div class="presets">
+                        <button class="preset-btn" onclick="setPreset(0)">Chào hỏi</button>
+                        <button class="preset-btn" onclick="setPreset(1)">Tài khoản</button>
+                        <button class="preset-btn" onclick="setPreset(2)">Chuyển khoản</button>
+                        <button class="preset-btn" onclick="setPreset(3)">Thẻ tín dụng</button>
+                        <button class="preset-btn" onclick="setPreset(4)">Tiết kiệm</button>
+                        <button class="preset-btn" onclick="setPreset(5)">Dài đoạn</button>
+                    </div>
+                    <div class="toggle-row">
+                        <div class="toggle" id="streamToggle" onclick="toggleStream()"></div>
+                        <span style="font-size:13px;">Streaming mode</span>
+                    </div>
+                    <div class="actions">
+                        <button class="btn btn-primary" id="generateBtn" onclick="generateAudio()" disabled>
+                            <span class="spinner"></span>
+                            <span class="btn-text">🎵 Generate</span>
+                        </button>
+                        <button class="btn btn-secondary" onclick="stopAudio()">⏹ Stop</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Audio Player -->
+            <div class="card">
+                <div class="card-header">🔊 Audio Output</div>
+                <div class="card-body">
+                    <div class="player-wrap">
+                        <audio id="audioPlayer" controls></audio>
+                        <div class="player-info" id="playerInfo" style="display:none;">
+                            <span>⏱ Gen: <span class="val" id="infoGenTime">—</span></span>
+                            <span>📏 Duration: <span class="val" id="infoDuration">—</span></span>
+                            <span>📦 Size: <span class="val" id="infoSize">—</span></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right column -->
+        <div class="right-col">
+            <div class="card" style="margin-bottom: 16px;">
+                <div class="card-header">🧠 Model Info</div>
+                <div class="card-body">
+                    <div class="model-info">
+                        <div class="mi">
+                            <div class="label">Base Model</div>
+                            <div class="value" id="infoBase">—</div>
+                        </div>
+                        <div class="mi">
+                            <div class="label">LoRA Adapter</div>
+                            <div class="value" id="infoLoRA">—</div>
+                        </div>
+                        <div class="mi">
+                            <div class="label">Device</div>
+                            <div class="value" id="infoDevice">—</div>
+                        </div>
+                        <div class="mi">
+                            <div class="label">Ref Audio</div>
+                            <div class="value" id="infoRef">—</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="flex:1; display:flex; flex-direction:column;">
+                <div class="card-header">
+                    📋 Logs
+                    <button class="preset-btn" style="margin-left:auto;" onclick="clearLogs()">Clear</button>
+                </div>
+                <div class="log-body" id="logBody">
+                    <div class="empty-state">
+                        <div class="icon">📋</div>
+                        <div>Logs will appear here</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = window.location.origin;
+        let streaming = false;
+        let generating = false;
+        let logsOn = false;
+
+        const PRESETS = [
+            "Xin chào, tôi là trợ lý AI ngân hàng. Tôi có thể giúp gì cho bạn hôm nay?",
+            "Tài khoản của bạn hiện có số dư ba mươi triệu đồng. Giao dịch gần nhất là chuyển khoản năm triệu đồng ngày hôm qua.",
+            "Bạn muốn chuyển khoản bao nhiêu tiền? Vui lòng cung cấp số tài khoản người nhận và số tiền cần chuyển.",
+            "Thẻ tín dụng của bạn còn hạn mức mười lăm triệu đồng. Kỳ sao kê tiếp theo sẽ đóng vào ngày hai mươi tháng này.",
+            "Lãi suất tiết kiệm hiện tại là sáu phẩy năm phần trăm mỗi năm cho kỳ hạn mười hai tháng. Bạn có muốn mở sổ tiết kiệm không?",
+            "Ngân hàng chúng tôi vừa ra mắt chương trình ưu đãi đặc biệt dành cho khách hàng thân thiết. Khi mở tài khoản tiết kiệm với số dư tối thiểu năm mươi triệu đồng, bạn sẽ được hưởng lãi suất cộng thêm một phần trăm và miễn phí chuyển khoản trong ba tháng đầu tiên."
+        ];
+
+        function setPreset(i) { document.getElementById('genText').value = PRESETS[i]; }
+
+        function toggleStream() {
+            streaming = !streaming;
+            document.getElementById('streamToggle').classList.toggle('active', streaming);
+        }
+
+        function log(msg, type = 'info') {
+            if (!logsOn) { document.getElementById('logBody').innerHTML = ''; logsOn = true; }
+            const t = new Date().toLocaleTimeString('en-US', { hour12: false });
+            const el = document.createElement('div');
+            el.className = 'log-entry';
+            el.innerHTML = `<span class="log-time">${t}</span><span class="log-${type}">${msg}</span>`;
+            const body = document.getElementById('logBody');
+            body.appendChild(el);
+            body.scrollTop = body.scrollHeight;
+        }
+
+        function clearLogs() {
+            document.getElementById('logBody').innerHTML = '<div class="empty-state"><div class="icon">📋</div><div>Logs will appear here</div></div>';
+            logsOn = false;
+        }
+
+        async function checkHealth() {
+            try {
+                const r = await fetch(`${API}/health`);
+                const d = await r.json();
+                const dot = document.getElementById('statusDot');
+                const txt = document.getElementById('statusText');
+
+                if (d.status === 'ready') {
+                    dot.className = 'status-dot ready';
+                    txt.textContent = 'Ready';
+                    document.getElementById('generateBtn').disabled = false;
+                    document.getElementById('infoBase').textContent = d.base_model || '—';
+                    document.getElementById('infoLoRA').textContent = d.lora_adapter || '—';
+                    document.getElementById('infoDevice').textContent = d.device || '—';
+                    document.getElementById('infoRef').textContent = d.ref_audio || '—';
+
+                    const badge = document.getElementById('loraBadge');
+                    badge.textContent = d.lora_loaded ? 'LoRA ✓' : 'No LoRA';
+                    log(`Server ready — ${d.base_model} + ${d.lora_adapter} (${d.device})`, 'success');
+                } else {
+                    dot.className = 'status-dot';
+                    txt.textContent = 'Loading...';
+                    setTimeout(checkHealth, 3000);
+                }
+            } catch (e) {
+                document.getElementById('statusDot').className = 'status-dot error';
+                document.getElementById('statusText').textContent = 'Disconnected';
+                log(`Cannot connect: ${e.message}`, 'error');
+                setTimeout(checkHealth, 5000);
+            }
+        }
+
+        async function genNormal() {
+            const text = document.getElementById('genText').value.trim();
+            if (!text) { log('Text is empty', 'warning'); return; }
+
+            const btn = document.getElementById('generateBtn');
+            btn.classList.add('loading'); btn.disabled = true; generating = true;
+
+            log(`Generating: "${text.substring(0, 60)}..."`, 'info');
+
+            try {
+                const t0 = performance.now();
+                const res = await fetch(`${API}/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ gen_text: text }),
+                });
+
+                if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
+
+                const th = res.headers.get('X-TTS-Timings');
+                const timings = th ? JSON.parse(th) : {};
+                const blob = await res.blob();
+
+                const url = URL.createObjectURL(blob);
+                const player = document.getElementById('audioPlayer');
+                player.src = url; player.play();
+
+                document.getElementById('playerInfo').style.display = 'flex';
+                document.getElementById('infoGenTime').textContent = `${timings.generate || '?'}s`;
+                document.getElementById('infoDuration').textContent = `${timings.duration_sec || '?'}s`;
+                document.getElementById('infoSize').textContent = `${(blob.size / 1024).toFixed(1)} KB`;
+
+                log(`✅ Done in ${timings.generate}s (${timings.duration_sec}s audio, ${(blob.size / 1024).toFixed(1)} KB)`, 'success');
+            } catch (e) {
+                log(`❌ ${e.message}`, 'error');
+            } finally {
+                btn.classList.remove('loading'); btn.disabled = false; generating = false;
+            }
+        }
+
+        async function genStream() {
+            const text = document.getElementById('genText').value.trim();
+            if (!text) { log('Text is empty', 'warning'); return; }
+
+            const btn = document.getElementById('generateBtn');
+            btn.classList.add('loading'); btn.disabled = true; generating = true;
+
+            log(`Streaming: "${text.substring(0, 60)}..."`, 'info');
+
+            try {
+                const res = await fetch(`${API}/generate-stream`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ gen_text: text }),
+                });
+
+                if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buf = '';
+                const chunks = [];
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, { stream: true });
+                    const lines = buf.split('\n');
+                    buf = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const d = JSON.parse(line.slice(6));
+                                if (d.audio_base64) {
+                                    const b = atob(d.audio_base64);
+                                    const bytes = new Uint8Array(b.length);
+                                    for (let i = 0; i < b.length; i++) bytes[i] = b.charCodeAt(i);
+                                    chunks.push(bytes);
+                                    log(`Chunk ${d.chunk_index} (t=${d.elapsed}s)`, 'info');
+                                }
+                                if (d.total_time) log(`✅ Stream done in ${d.total_time}s`, 'success');
+                            } catch (e) { }
+                        }
+                    }
+                }
+
+                if (chunks.length > 0) {
+                    const blob = new Blob([chunks[chunks.length - 1]], { type: 'audio/wav' });
+                    const url = URL.createObjectURL(blob);
+                    document.getElementById('audioPlayer').src = url;
+                    document.getElementById('audioPlayer').play();
+                    document.getElementById('playerInfo').style.display = 'flex';
+                    document.getElementById('infoGenTime').textContent = 'streamed';
+                    document.getElementById('infoDuration').textContent = `${chunks.length} chunks`;
+                    const total = chunks.reduce((s, c) => s + c.length, 0);
+                    document.getElementById('infoSize').textContent = `${(total / 1024).toFixed(1)} KB`;
+                }
+            } catch (e) {
+                log(`❌ ${e.message}`, 'error');
+            } finally {
+                btn.classList.remove('loading'); btn.disabled = false; generating = false;
+            }
+        }
+
+        function generateAudio() {
+            if (generating) return;
+            streaming ? genStream() : genNormal();
+        }
+
+        function stopAudio() {
+            const p = document.getElementById('audioPlayer');
+            p.pause(); p.currentTime = 0;
+            log('Stopped', 'info');
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            log('Connecting...', 'info');
+            checkHealth();
+        });
+    </script>
+
+</body>
+
+</html>

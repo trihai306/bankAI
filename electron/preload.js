@@ -68,7 +68,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("voice:test-generate", id, text),
   },
 
-  // TTS - F5-TTS Vietnamese (Voice Cloning)
+  // TTS - VieNeu-TTS Vietnamese (Voice Synthesis)
   tts: {
     getStatus: () => ipcRenderer.invoke("tts:status"),
     install: () => ipcRenderer.invoke("tts:install"),

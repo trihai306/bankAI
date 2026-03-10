@@ -36,13 +36,11 @@ function getPythonPaths() {
     return {
       python: path.join(venvDir, "python.exe"),
       pip: path.join(venvDir, "Scripts", "pip.exe"),
-      cli: path.join(venvDir, "Scripts", "f5-tts_infer-cli.exe"),
     };
   }
   return {
     python: path.join(venvDir, "bin", "python"),
     pip: path.join(venvDir, "bin", "pip"),
-    cli: path.join(venvDir, "bin", "f5-tts_infer-cli"),
   };
 }
 
@@ -507,9 +505,9 @@ ipcMain.handle("model:train", async (event, config) => {
   return { success: true, jobId: Date.now().toString() };
 });
 
-// TTS - F5-TTS Vietnamese via Python CLI
+// TTS - VieNeu-TTS Vietnamese via Python server
 
-const PYTHON_SCRIPT = path.join(PYTHON_DIR, "f5_tts.py");
+const PYTHON_SCRIPT = path.join(PYTHON_DIR, "vieneu_tts_server.py");
 const TTS_OUTPUT_DIR = path.join(PYTHON_DIR, "outputs");
 const REF_AUDIO_DIR = path.join(PYTHON_DIR, "ref_audio");
 
@@ -568,7 +566,7 @@ ipcMain.handle("tts:status", async () => {
     const result = await runPython(["check"]);
     return {
       ready: result.ready,
-      engine: "F5-TTS Vietnamese",
+      engine: "VieNeu-TTS Vietnamese",
       model_exists: result.model_exists,
       vocab_exists: result.vocab_exists,
       cli_available: result.cli_available,
@@ -578,7 +576,7 @@ ipcMain.handle("tts:status", async () => {
     return {
       ready: false,
       error: error.message,
-      engine: "F5-TTS Vietnamese (not installed)",
+      engine: "VieNeu-TTS Vietnamese (not installed)",
     };
   }
 });
@@ -766,7 +764,7 @@ ipcMain.handle("tts:generate", async (event, config) => {
       return { success: false, error: result.error };
     }
   } catch (error) {
-    console.error("F5-TTS error:", error);
+    console.error("VieNeu-TTS error:", error);
     return { success: false, error: error.message };
   }
 });
@@ -1421,7 +1419,7 @@ ipcMain.handle("hardware:get-info", async () => {
       modelStatus,
     },
     tts: {
-      engine: "F5-TTS (persistent server)",
+      engine: "VieNeu-TTS (persistent server)",
       serverStatus: ttsServer.getStatus(),
     },
   };

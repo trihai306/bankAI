@@ -26,7 +26,9 @@ PROJECT_ROOT = Path(__file__).parent.parent.absolute()
 SCRIPT_DIR = Path(__file__).parent.absolute()
 VENV_DIR = SCRIPT_DIR / "venv"
 REQUIREMENTS_FILE = SCRIPT_DIR / "requirements.txt"
-F5_TTS_DIR = SCRIPT_DIR / "F5-TTS-Vietnamese"
+VIENEU_DIR = SCRIPT_DIR / "VieNeu-TTS"
+VIENEU_VENV_DIR = VIENEU_DIR / ".venv"
+TTS_SERVER_SCRIPT = SCRIPT_DIR / "vieneu_tts_server.py"
 
 
 def get_platform_info():
@@ -37,12 +39,12 @@ def get_platform_info():
     if system == "Windows":
         python_path = VENV_DIR / "Scripts" / "python.exe"
         pip_path = VENV_DIR / "Scripts" / "pip.exe"
-        cli_path = VENV_DIR / "Scripts" / "f5-tts_infer-cli.exe"
+        vieneu_python_path = VIENEU_VENV_DIR / "Scripts" / "python.exe"
     else:
         # Linux and macOS
         python_path = VENV_DIR / "bin" / "python"
         pip_path = VENV_DIR / "bin" / "pip"
-        cli_path = VENV_DIR / "bin" / "f5-tts_infer-cli"
+        vieneu_python_path = VIENEU_VENV_DIR / "bin" / "python"
 
     return {
         "system": system,
@@ -50,12 +52,12 @@ def get_platform_info():
         "python_version": platform.python_version(),
         "venv_python": str(python_path),
         "venv_pip": str(pip_path),
-        "cli_path": str(cli_path),
+        "vieneu_python": str(vieneu_python_path),
     }
 
 
 def find_system_python():
-    """Find a suitable system Python (3.10+)."""
+    """Find a suitable system Python (3.11+)."""
     candidates = ["python3", "python"] if platform.system() != "Windows" else ["python", "python3", "py"]
 
     for cmd in candidates:
@@ -68,7 +70,7 @@ def find_system_python():
                 )
                 version_str = result.stdout.strip().split()[-1]
                 major, minor = map(int, version_str.split(".")[:2])
-                if major == 3 and minor >= 12:
+                if major == 3 and minor >= 11:
                     return exe, version_str
             except Exception:
                 continue
@@ -109,14 +111,15 @@ def check_env():
 
     venv_exists = VENV_DIR.exists() and Path(info["venv_python"]).exists()
     requirements_exist = REQUIREMENTS_FILE.exists()
-    f5_tts_cloned = F5_TTS_DIR.exists()
+    vieneu_cloned = VIENEU_DIR.exists()
+    vieneu_venv_exists = VIENEU_VENV_DIR.exists() and Path(info["vieneu_python"]).exists()
+    tts_server_exists = TTS_SERVER_SCRIPT.exists()
 
     # Check installed packages if venv exists
     installed_packages = []
     whisper_installed = check_nodejs_whisper()  # Whisper is handled by nodejs-whisper (Node.js)
     torch_installed = False
-    f5_tts_installed = False
-    cli_available = Path(info["cli_path"]).exists()
+    vieneu_installed = False
 
     if venv_exists:
         try:
@@ -128,7 +131,21 @@ def check_env():
                 packages = json.loads(result.stdout)
                 installed_packages = [p["name"].lower() for p in packages]
                 torch_installed = "torch" in installed_packages
-                f5_tts_installed = "f5-tts" in installed_packages or any("f5" in p for p in installed_packages)
+                vieneu_installed = "vieneu-tts" in installed_packages or any("vieneu" in p for p in installed_packages)
+        except Exception:
+            pass
+
+    # Also check VieNeu-TTS .venv for vieneu package if main venv doesn't have it
+    if not vieneu_installed and vieneu_venv_exists:
+        try:
+            result = subprocess.run(
+                [info["vieneu_python"], "-m", "pip", "list", "--format=json"],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0:
+                packages = json.loads(result.stdout)
+                vieneu_packages = [p["name"].lower() for p in packages]
+                vieneu_installed = "vieneu-tts" in vieneu_packages or any("vieneu" in p for p in vieneu_packages)
         except Exception:
             pass
 
@@ -141,9 +158,10 @@ def check_env():
          venv_exists=venv_exists,
          venv_python=info["venv_python"],
          requirements_exist=requirements_exist,
-         f5_tts_cloned=f5_tts_cloned,
-         f5_tts_installed=f5_tts_installed,
-         cli_available=cli_available,
+         vieneu_cloned=vieneu_cloned,
+         vieneu_venv_exists=vieneu_venv_exists,
+         vieneu_installed=vieneu_installed,
+         tts_server_exists=tts_server_exists,
          whisper_installed=whisper_installed,
          torch_installed=torch_installed,
          installed_count=len(installed_packages),
@@ -160,7 +178,7 @@ def create_venv():
 
     sys_python, sys_version = find_system_python()
     if not sys_python:
-        emit("error", step="creating_venv", message="Python 3.10+ not found on system")
+        emit("error", step="creating_venv", message="Python 3.11+ not found on system")
         return False
 
     try:
@@ -229,35 +247,35 @@ def install_requirements():
         return False
 
 
-def install_f5_tts():
-    """Install F5-TTS Vietnamese from local clone."""
+def install_vieneu_tts():
+    """Install VieNeu-TTS from local clone."""
     info = get_platform_info()
 
-    if not F5_TTS_DIR.exists():
-        emit("step", step="f5_tts_skip", message="F5-TTS-Vietnamese not cloned yet, skipping")
+    if not VIENEU_DIR.exists():
+        emit("step", step="vieneu_skip", message="VieNeu-TTS not cloned yet, skipping")
         return True  # Not a failure, just skip
 
-    emit("step", step="installing_f5_tts", message="Installing F5-TTS Vietnamese...")
+    emit("step", step="installing_vieneu", message="Installing VieNeu-TTS...")
 
     try:
         result = subprocess.run(
-            [info["venv_python"], "-m", "pip", "install", "-e", str(F5_TTS_DIR)],
+            [info["venv_python"], "-m", "pip", "install", "-e", str(VIENEU_DIR)],
             capture_output=True, text=True, timeout=600
         )
 
         if result.returncode != 0:
-            emit("error", step="install_f5_tts", message=f"F5-TTS install failed: {result.stderr[-500:]}")
+            emit("error", step="install_vieneu", message=f"VieNeu-TTS install failed: {result.stderr[-500:]}")
             return False
 
-        emit("step", step="f5_tts_installed", message="F5-TTS Vietnamese installed successfully")
+        emit("step", step="vieneu_installed", message="VieNeu-TTS installed successfully")
         return True
     except Exception as e:
-        emit("error", step="install_f5_tts", message=str(e))
+        emit("error", step="install_vieneu", message=str(e))
         return False
 
 
 def full_setup():
-    """Run full setup: venv → pip upgrade → requirements → F5-TTS."""
+    """Run full setup: venv → pip upgrade → requirements → VieNeu-TTS."""
     emit("step", step="setup_start", message="Starting full Python environment setup...")
 
     total_steps = 4
@@ -282,10 +300,10 @@ def full_setup():
         emit("complete", success=False, message="Failed to install Python packages")
         return
 
-    # Step 4: Install F5-TTS
+    # Step 4: Install VieNeu-TTS
     current += 1
     emit("progress", current=current, total=total_steps, percent=int(current / total_steps * 100))
-    install_f5_tts()  # Non-critical
+    install_vieneu_tts()  # Non-critical
 
     emit("complete", success=True, message="Python environment setup completed!")
 
@@ -303,7 +321,7 @@ def main():
         full_setup()
     elif command == "install":
         install_requirements()
-        install_f5_tts()
+        install_vieneu_tts()
     else:
         print(json.dumps({"error": f"Unknown command: {command}"}))
         sys.exit(1)

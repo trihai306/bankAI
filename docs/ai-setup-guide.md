@@ -5,7 +5,7 @@ Tài liệu hướng dẫn cài đặt đầy đủ các thành phần AI cho �
 | Thành phần | Công nghệ | Runtime | Chức năng |
 |---|---|---|---|
 | **Whisper** | whisper.cpp (nodejs-whisper) | Node.js (native) | Speech-to-Text |
-| **F5-TTS** | F5-TTS-Vietnamese | Python 3.12 | Text-to-Speech tiếng Việt |
+| **VieNeu-TTS** | VieNeu-TTS 0.3B (GGUF) | Python 3.11+ (FastAPI) | Text-to-Speech tiếng Việt |
 | **Qwen3 LLM** | node-llama-cpp | Node.js (native) | Mô hình ngôn ngữ local |
 
 ---
@@ -22,7 +22,7 @@ Tài liệu hướng dẫn cài đặt đầy đủ các thành phần AI cho �
 | **CUDA Toolkit** | 12.8+ |
 | **Ổ đĩa** | 20 GB+ trống |
 | **Node.js** | v22+ |
-| **Python** | 3.11+ (cho F5-TTS) |
+| **Python** | 3.11+ (cho VieNeu-TTS) |
 
 > ⚠️ **GPU BẮT BUỘC:** Tất cả 3 engine AI (Whisper, LLM, TTS) đều chạy trên GPU (CUDA). Không có CPU fallback.
 
@@ -33,8 +33,8 @@ Tài liệu hướng dẫn cài đặt đầy đủ các thành phần AI cho �
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  Electron App (React Frontend)                               │
-│  ├── VoiceTraining.jsx  → Thu âm + TTS                      │
-│  ├── Chat.jsx           → Chat AI + Transcription            │
+│  ├── VoiceChat.jsx     → Trò chuyện realtime                │
+│  ├── VoiceCreate.jsx   → Quản lý giọng đọc                 │
 │  └── Settings.jsx       → Quản lý Python env                │
 └────────────────┬─────────────────────────────────────────────┘
                  │ IPC (inter-process communication)
@@ -43,7 +43,7 @@ Tài liệu hướng dẫn cài đặt đầy đủ các thành phần AI cho �
 │  Electron Main Process (main.js)                             │
 │  ├── whisper.cpp (nodejs-whisper)  → Speech-to-Text   [Node] │
 │  ├── node-llama-cpp (Qwen3)       → Local LLM         [Node] │
-│  └── spawn Python                 → F5-TTS          [Python] │
+│  └── tts-server.js (HTTP)         → VieNeu-TTS      [Python] │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -178,7 +178,7 @@ cmake --version
 
 ##### Bước 3: Cài Git (nếu chưa có)
 
-Git cần để clone repositories (F5-TTS, model...) và `git lfs` để tải model lớn.
+Git cần để clone repositories (VieNeu-TTS...) và quản lý version control.
 
 **Tải về:**
 
@@ -394,37 +394,37 @@ dir node_modules\nodejs-whisper\cpp\whisper.cpp\models\ggml-medium.bin
 
 ---
 
-# PHẦN 2: F5-TTS — Text-to-Speech (Python)
+# PHẦN 2: VieNeu-TTS — Text-to-Speech (Python)
 
-F5-TTS tạo giọng nói tiếng Việt, hỗ trợ zero-shot voice cloning từ 3-30s audio mẫu.
-**Cần Python 3.12+.**
+VieNeu-TTS tạo giọng nói tiếng Việt, sử dụng GGUF backbone trên CPU + codec trên CUDA.
+**Cần Python 3.11+.** Server chạy qua FastAPI trên port 8179.
 
 ---
 
-## 2.1. Cài đặt Python 3.12
+## 2.1. Cài đặt Python 3.11+
 
 ### 🐧 Linux (Ubuntu/Debian)
 ```bash
 sudo add-apt-repository ppa:deadsnakes/ppa
 sudo apt update
-sudo apt install python3.12 python3.12-venv python3.12-dev -y
+sudo apt install python3.11 python3.11-venv python3.11-dev -y
 
 # Verify
-python3.12 --version
-# Python 3.12.x
+python3.11 --version
+# Python 3.11.x
 ```
 
 ### 🍎 macOS
 ```bash
-brew install python@3.12
+brew install python@3.11
 
 # Verify
-python3.12 --version
+python3.11 --version
 ```
 
 ### 🪟 Windows
 
-1. Tải từ [python.org/downloads](https://www.python.org/downloads/) → chọn **Python 3.12.x**
+1. Tải từ [python.org/downloads](https://www.python.org/downloads/) → chọn **Python 3.11.x** hoặc **3.12.x**
 2. Chạy installer:
    - ✅ Tick **"Add python.exe to PATH"** (quan trọng!)
    - ✅ Tick **"Install pip"**
@@ -433,13 +433,13 @@ python3.12 --version
 3. Verify:
    ```powershell
    python --version
-   # Python 3.12.x
+   # Python 3.11.x hoặc 3.12.x
    
    pip --version
    # pip 24.x from ...
    ```
 
-> ⚠️ **Windows:** Nếu `python` không nhận, thử `python3` hoặc `py -3.12`.
+> ⚠️ **Windows:** Nếu `python` không nhận, thử `python3` hoặc `py -3.11`.
 
 ---
 
@@ -451,7 +451,7 @@ python3.12 --version
 cd python
 
 # Tạo virtual environment
-python3.12 -m venv venv
+python3.11 -m venv venv
 
 # Kích hoạt venv
 source venv/bin/activate
@@ -462,14 +462,12 @@ pip install --upgrade pip
 # Cài dependencies
 pip install -r requirements.txt
 
-# Clone F5-TTS Vietnamese
-git clone https://github.com/nguyenthienhy/F5-TTS-Vietnamese
-cd F5-TTS-Vietnamese && pip install -e . && cd ..
-
-# Tải model (~5GB)
-git lfs install
-git clone https://huggingface.co/hynt/F5-TTS-Vietnamese-ViVoice
+# Clone VieNeu-TTS
+git clone https://github.com/pnnbao/VieNeu-TTS
+cd VieNeu-TTS && pip install -e . && cd ..
 ```
+
+> 💡 **Model tự động tải:** VieNeu-TTS tự động tải model GGUF từ HuggingFace khi khởi động lần đầu. Không cần clone model riêng.
 
 ### 🪟 Windows
 
@@ -488,15 +486,11 @@ python -m pip install --upgrade pip
 # Cài dependencies
 pip install -r requirements.txt
 
-# Clone F5-TTS Vietnamese
-git clone https://github.com/nguyenthienhy/F5-TTS-Vietnamese
-cd F5-TTS-Vietnamese
+# Clone VieNeu-TTS
+git clone https://github.com/pnnbao/VieNeu-TTS
+cd VieNeu-TTS
 pip install -e .
 cd ..
-
-# Tải model (~5GB) - cần Git LFS
-git lfs install
-git clone https://huggingface.co/hynt/F5-TTS-Vietnamese-ViVoice
 ```
 
 > ⚠️ **Windows — Lỗi numpy/C compiler:** Nếu gặp lỗi khi build numpy, cài trước:
@@ -504,11 +498,9 @@ git clone https://huggingface.co/hynt/F5-TTS-Vietnamese-ViVoice
 > pip install numpy --only-binary :all:
 > ```
 
-> ⚠️ **Windows — Git LFS:** Tải từ [git-lfs.github.com](https://git-lfs.github.com/) nếu `git lfs` chưa hoạt động.
-
 ---
 
-## 2.4. Kiểm tra cài đặt F5-TTS
+## 2.4. Kiểm tra cài đặt VieNeu-TTS
 
 ### 🐧 Linux / 🍎 macOS
 ```bash
@@ -517,8 +509,8 @@ cd python
 # Check toàn bộ environment
 python setup_env.py check
 
-# Check riêng F5-TTS
-python f5_tts.py check
+# Chạy TTS server
+python vieneu_tts_server.py
 ```
 
 ### 🪟 Windows
@@ -528,8 +520,8 @@ cd python
 # Check toàn bộ environment
 python setup_env.py check
 
-# Check riêng F5-TTS
-python f5_tts.py check
+# Chạy TTS server
+python vieneu_tts_server.py
 ```
 
 **Output mẫu (khi mọi thứ OK):**
@@ -538,8 +530,9 @@ python f5_tts.py check
   "event": "check_result",
   "venv_exists": true,
   "torch_installed": true,
-  "f5_tts_installed": true,
-  "cli_available": true,
+  "vieneu_cloned": true,
+  "vieneu_installed": true,
+  "tts_server_exists": true,
   "ready": true
 }
 ```
@@ -550,17 +543,18 @@ python f5_tts.py check
 
 ```
 python/
-├── f5_tts.py                       # CLI script cho TTS
+├── vieneu_tts_server.py            # TTS server (FastAPI + uvicorn)
 ├── setup_env.py                    # Auto setup script
 ├── requirements.txt                # Python dependencies
-├── transcribe.py.bak               # Whisper Python (archived, không cần)
-├── venv/                           # Virtual environment (tự tạo)
-│   ├── bin/ (Linux/macOS)          # python, pip, f5-tts_infer-cli
-│   └── Scripts/ (Windows)          # python.exe, pip.exe, f5-tts_infer-cli.exe
-├── F5-TTS-Vietnamese/              # F5-TTS repo (git clone)
-├── F5-TTS-Vietnamese-ViVoice/      # Model checkpoint (HuggingFace)
-│   ├── model_last.pt               # ~1.5GB
-│   └── vocab.txt
+├── venv/                           # Virtual environment (core deps)
+│   ├── bin/ (Linux/macOS)          # python, pip
+│   └── Scripts/ (Windows)          # python.exe, pip.exe
+├── VieNeu-TTS/                     # VieNeu-TTS repo (git clone)
+│   ├── .venv/                      # VieNeu-TTS own venv
+│   ├── src/vieneu/                 # Core library
+│   └── finetune/                   # LoRA fine-tuning
+│       ├── dataset/raw_audio/      # Reference audio
+│       └── output/                 # LoRA + merged models
 ├── ref_audio/                      # Giọng mẫu (upload từ UI)
 │   └── ref_170681234.wav
 └── outputs/                        # Audio đã tạo
@@ -586,6 +580,15 @@ Tự động — `node-llama-cpp` tải model GGUF khi khởi động lần đ�
 | VRAM cần | ~4 GB |
 | Tốc độ | ~30-80 tok/s (CUDA GPU) |
 
+> 💡 **VieNeu-TTS Model Info:**
+> | Thông số | Giá trị |
+> |---|---|
+> | Model | VieNeu-TTS 0.3B (GGUF q4) |
+> | Backbone | CPU (llama.cpp) |
+> | Codec | CUDA (neuphonic/distill-neucodec) |
+> | Server | FastAPI + uvicorn (port 8179) |
+> | Tốc độ | ~2-5s/câu |
+
 ---
 
 # PHẦN 4: Kiểm tra trạng thái tổng thể
@@ -599,9 +602,9 @@ Mở **Settings** → card **Python Environment**:
 | ✅ **Whisper (native)** | Luôn sẵn sàng (Node.js) |
 | ✅/❌ **Venv** | Python virtual environment |
 | ✅/❌ **PyTorch** | ML framework cho TTS |
-| ✅/❌ **F5-TTS** | Voice generation package |
-| ✅/❌ **TTS CLI** | `f5-tts_infer-cli` executable |
-| ✅/❌ **System Python** | Python 3.12+ trên hệ thống |
+| ✅/❌ **VieNeu-TTS** | Voice generation package |
+| ✅/❌ **TTS Server** | `vieneu_tts_server.py` script |
+| ✅/❌ **System Python** | Python 3.11+ trên hệ thống |
 
 ## Qua CLI
 
@@ -676,11 +679,11 @@ Sau đó xóa build cũ và build lại.
 sudo apt install cmake -y
 ```
 
-### ❌ `Python 3.12+ not found on system`
+### ❌ `Python 3.11+ not found on system`
 ```bash
 sudo add-apt-repository ppa:deadsnakes/ppa
 sudo apt update
-sudo apt install python3.12 python3.12-venv python3.12-dev -y
+sudo apt install python3.11 python3.11-venv python3.11-dev -y
 ```
 
 ---
@@ -738,13 +741,13 @@ rm -rf node_modules && npm install
 |---|---|---|
 | Python venv | `venv/bin/python` | `venv\Scripts\python.exe` |
 | Pip | `venv/bin/pip` | `venv\Scripts\pip.exe` |
-| TTS CLI | `venv/bin/f5-tts_infer-cli` | `venv\Scripts\f5-tts_infer-cli.exe` |
+| VieNeu-TTS venv | `VieNeu-TTS/.venv/bin/python` | `VieNeu-TTS\.venv\Scripts\python.exe` |
 | Whisper CLI | `build/bin/whisper-cli` | `build\bin\Release\whisper-cli.exe` |
 
 App tự detect OS qua:
 - `electron/main.js` → `getPythonPaths()` dùng `process.platform`
+- `electron/tts-server.js` → `getPythonDir()` + `VieNeu-TTS/.venv`
 - `python/setup_env.py` → `platform.system()`
-- `python/f5_tts.py` → `IS_WINDOWS` constant
 
 ## Tổng kết cài đặt
 
@@ -759,7 +762,7 @@ App tự detect OS qua:
 | 7 | Build node-llama-cpp với CUDA | 5-15 phút | ✅ |
 | 8 | Cài Python 3.11+ | 2 phút | Cho TTS |
 | 9 | Cài đặt Python env (thủ công) | 10-30 phút | Cho TTS |
-| 10 | Clone F5-TTS + tải model | 10-15 phút | Cho TTS |
+| 10 | Clone VieNeu-TTS | 5-10 phút | Cho TTS |
 
 ---
 
@@ -778,6 +781,7 @@ App tự detect OS qua:
 | GPU | NVIDIA GeForce RTX 5070 (sm_120) |
 | VS Build Tools | 2026 (v18, MSVC 19.50) |
 | PyTorch | 2.8.0+cu128 |
+| VieNeu-TTS | 0.3B (GGUF q4) |
 
 > ⚠️ **VS 2026 + CUDA 12.8:** Cần flag `--allow-unsupported-compiler` khi build.
 > CUDA 12.8 officially chỉ support VS 2017–2022.

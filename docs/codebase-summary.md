@@ -7,10 +7,12 @@ AI Voice Bot is an Electron-based application designed for automated banking cal
 
 | File | Purpose | Key Functions/Components |
 |------|---------|-------------------------|
-| `electron/main.js` | Main entry point for Electron. Manages windows and IPC. | `spawnPython`, IPC handlers (`tts`, `qwen`, `voice`, `db`) |
+| `electron/main.js` | Main entry point for Electron. Manages windows and IPC. | IPC handlers (`tts`, `qwen`, `voice`, `db`, `voice-chat`) |
 | `electron/preload.js` | Secure bridge between Main and Renderer processes. | `contextBridge` exposing `window.electronAPI` |
-| `electron/db.js` | SQLite database management using `better-sqlite3`. | `initDB`, `dbAPI` (Dashboard stats, Calls, Settings) |
-| `electron/edge-tts.js` | Cloud fallback for TTS using Microsoft Edge API. | `generateSpeech`, `getVoices`, `cleanupOldFiles` |
+| `electron/db.js` | SQLite database management using `better-sqlite3`. | `initDB`, `dbAPI` (Dashboard stats, Calls, Settings, Voices) |
+| `electron/tts-server.js` | VieNeu-TTS server manager (persistent Python FastAPI). | `TTSServerManager` (start, stop, generate, generateWav) |
+| `electron/voice-engine.js` | Realtime voice conversation pipeline. | `VoiceConversationEngine` (STT → LLM → TTS) |
+| `electron/whisper-server.js` | Persistent whisper.cpp STT server. | `WhisperServerManager` (transcribe) |
 
 ## Frontend (React)
 
@@ -20,13 +22,12 @@ AI Voice Bot is an Electron-based application designed for automated banking cal
 | `src/App.jsx` | Router configuration. | Defines routes for Dashboard, History, Settings, etc. |
 | `src/store/useStore.js` | Global state management via Zustand. | App settings, Electron API status, data fetching. |
 | `src/components/Layout.jsx` | Main application shell. | Sidebar navigation, glassmorphism layout, global theme. |
-| `src/components/WaveformVisualizer.jsx` | Audio visualization. | Real-time canvas-based waveform from audio streams. |
-| `src/pages/Dashboard.jsx` | Overview of system status. | Call stats, resource usage monitoring (placeholder), recent activity. |
-| `src/pages/VoiceTraining.jsx` | Voice cloning interface. | Recording reference audio, generating clones via F5-TTS. |
-| `src/pages/CallCenter.jsx` | Active call management. | Dialer UI, live call status, interaction log. |
-| `src/pages/Chat.jsx` | LLM playground. | Testing Qwen/Ollama responses with custom prompts. |
+| `src/pages/Dashboard.jsx` | Overview of system status. | Call stats, resource usage monitoring, recent activity. |
+| `src/pages/VoiceCreate.jsx` | Voice management interface. | Creating, editing, and testing voice profiles for VieNeu-TTS. |
+| `src/pages/VoiceChat.jsx` | Realtime voice conversation. | STT → LLM → TTS streaming pipeline with audio playback. |
+| `src/pages/HealthCheck.jsx` | System health monitoring. | Whisper, LLM, VieNeu-TTS status checks. |
 | `src/pages/History.jsx` | Call logs and transcripts. | Historical call data with playback and transcript view. |
-| `src/pages/ModelManager.jsx` | AI model management. | Installing and updating AI models (partially implemented). |
+| `src/pages/ModelManager.jsx` | AI model management. | Model status for Qwen3, Whisper, VieNeu-TTS. |
 | `src/pages/Settings.jsx` | Configuration page. | TTS, STT, and LLM selection and tuning. |
 | `src/pages/TrainingData.jsx` | Dataset browser. | Viewing banking knowledge and Q&A datasets. |
 
@@ -34,10 +35,11 @@ AI Voice Bot is an Electron-based application designed for automated banking cal
 
 | File | Purpose | Logic |
 |------|---------|-------|
-| `python/f5_tts.py` | Vietnamese Voice Cloning. | Uses F5-TTS architecture for zero-shot voice cloning. |
-| `python/transcribe.py` | Speech-to-Text. | Uses OpenAI Whisper (base model) for Vietnamese transcription. |
+| `python/vieneu_tts_server.py` | Vietnamese TTS Server. | VieNeu-TTS 0.3B GGUF backbone (CPU) + codec (CUDA), FastAPI + uvicorn on port 8179. |
+| `python/setup_env.py` | Environment setup automation. | Cross-platform venv creation, dependency installation, VieNeu-TTS status checks. |
 
 ## Data Resources
 - `training-data/`: Contains `.json`, `.csv`, and `.txt` files with banking domain knowledge in Vietnamese.
 - `python/ref_audio/`: Storage for reference `.wav` files used in voice cloning.
 - `python/outputs/`: Temporary storage for generated TTS audio files.
+- `python/VieNeu-TTS/finetune/`: LoRA fine-tuning datasets, adapters, and merged models.

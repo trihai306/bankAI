@@ -32,7 +32,7 @@ function getModelsDir() {
     return path.join(__dirname, "..", "models");
 }
 
-/** python/ directory containing venv + scripts + F5-TTS model */
+/** python/ directory containing venv + scripts + VieNeu-TTS */
 function getPythonDir() {
     if (isPackaged()) {
         return path.join(process.resourcesPath, "python");

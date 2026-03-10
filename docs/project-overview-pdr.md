@@ -13,7 +13,7 @@ Automate banking customer service calls in Vietnamese using local, private AI mo
 ### 1. Voice Cloning & TTS
 - **Vietnamese Support**: High-fidelity TTS specifically for Vietnamese language.
 - **Reference-based Cloning**: Ability to clone voices from short (5-10s) reference audio clips.
-- **Hybrid System**: Local F5-TTS for custom voices, Edge TTS for standard fallback.
+- **Hybrid System**: Local VieNeu-TTS for custom voices, Edge TTS for standard fallback.
 
 ### 2. Speech-to-Text (STT)
 - **Local Transcription**: OpenAI Whisper running locally for privacy.
@@ -21,7 +21,7 @@ Automate banking customer service calls in Vietnamese using local, private AI mo
 
 ### 3. Intelligent Text Processing (LLM)
 - **Task Automation**: Correcting transcripts, extracting intent, and generating answers.
-- **Model**: Qwen:4b via Ollama for local processing.
+- **Model**: Qwen3 4B via node-llama-cpp for local processing.
 
 ### 4. Call Management
 - **Dashboard**: Real-time stats, resource usage, and recent call history.
@@ -39,6 +39,6 @@ Automate banking customer service calls in Vietnamese using local, private AI mo
 
 ## Constraints & Assumptions
 - Requires a relatively modern GPU/CPU for local AI inference.
-- F5-TTS model download is large (~5GB).
-- Local Ollama instance must be running.
+- VieNeu-TTS GGUF model download is ~600MB (auto-downloaded on first run).
+- NVIDIA GPU with CUDA required for LLM and TTS codec.
 - Vietnamese-only focus for NLP/TTS/STT.

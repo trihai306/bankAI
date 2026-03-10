@@ -584,7 +584,7 @@ export default function VoiceCreate() {
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight text-white">Voice Create</h1>
-                    <p className="mt-1 text-slate-400">Tạo và quản lý giọng đọc cho F5-TTS</p>
+                    <p className="mt-1 text-slate-400">Tạo và quản lý giọng đọc cho VieNeu-TTS</p>
                 </div>
                 <div className="flex items-center gap-3">
                     <button

@@ -701,18 +701,16 @@ export default function HealthCheck() {
                     </div>
                 </EngineCard>
 
-                {/* F5-TTS (GPU Only) */}
+                {/* VieNeu-TTS (CPU + LoRA) */}
                 <EngineCard
-                    title="F5-TTS"
+                    title="VieNeu-TTS"
                     icon={Music}
-                    gradient="from-pink-500 to-rose-600"
+                    gradient="from-violet-500 to-purple-600"
                     status={f5Status}
                     statusLabel={ttsServerRunning ? 'Server Running' : undefined}
-                    model={ttsStatus?.model_exists ? 'F5-TTS Vietnamese' : null}
+                    model="VieNeu-TTS 0.3B + LoRA"
                     details={[
                         { ok: pythonEnv?.venv_exists, label: 'Python Venv' },
-                        { ok: pythonEnv?.torch_installed, label: 'PyTorch + CUDA' },
-                        { ok: pythonEnv?.f5_tts_installed, label: 'F5-TTS package' },
                         { ok: ttsServerRunning, label: 'Server đang chạy' },
                     ]}
                 >
@@ -744,20 +742,18 @@ export default function HealthCheck() {
                         </div>
                     </div>
 
-                    {/* CUDA + PyTorch */}
+                    {/* Mode + LoRA */}
                     <div className="grid grid-cols-2 gap-2">
                         <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5">
-                            <p className="text-[10px] text-slate-600 mb-0.5">GPU Mode</p>
+                            <p className="text-[10px] text-slate-600 mb-0.5">Mode</p>
                             <div className="flex items-center gap-1.5">
-                                <Zap className="w-3 h-3 text-emerald-400" />
-                                <span className="text-xs font-semibold text-emerald-400">CUDA</span>
+                                <Cpu className="w-3 h-3 text-blue-400" />
+                                <span className="text-xs font-semibold text-blue-400">CPU</span>
                             </div>
                         </div>
                         <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5">
-                            <p className="text-[10px] text-slate-600 mb-0.5">PyTorch</p>
-                            <span className={`text-xs font-semibold ${pythonEnv?.torch_installed ? 'text-emerald-400' : 'text-slate-500'}`}>
-                                {pythonEnv?.torch_installed ? '✓ cu128' : '—'}
-                            </span>
+                            <p className="text-[10px] text-slate-600 mb-0.5">LoRA</p>
+                            <span className="text-xs font-semibold text-violet-400">Fine-tuned</span>
                         </div>
                     </div>
                 </EngineCard>

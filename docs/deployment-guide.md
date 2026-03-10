@@ -2,9 +2,9 @@
 
 ## Prerequisites for All Platforms
 - **Node.js**: v18+
-- **Python**: 3.10+ (must be in system PATH)
+- **Python**: 3.11+ (must be in system PATH)
 - **ffmpeg**: Must be installed and available in system PATH.
-- **Ollama**: Must be installed and running on the target machine.
+- **NVIDIA GPU**: CUDA-capable GPU required for AI inference.
 
 ## Packaging for Distribution
 
@@ -39,9 +39,9 @@ In production, this needs to be bundled or created on first run.
 3. Install dependencies: `pip install -r requirements.txt`.
 
 ### AI Models
-- **Ollama**: Run `ollama pull qwen:4b`.
-- **F5-TTS**: The first run of voice cloning will trigger a download of the pretrained Vietnamese model (~5GB). Ensure a stable internet connection.
-- **Whisper**: The first run of transcription will download the `base` Whisper model.
+- **Qwen3 LLM**: Auto-downloaded GGUF model via node-llama-cpp on first run (~2.5GB).
+- **VieNeu-TTS**: Auto-downloaded GGUF backbone from HuggingFace on first run (~600MB). Runs as FastAPI server on port 8179.
+- **Whisper**: Auto-downloaded whisper.cpp model on first run.
 
 ## Troubleshooting Production Builds
 - **Audio Conversion**: If audio doesn't play or transcribe, check if `ffmpeg` is properly installed.
