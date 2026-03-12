@@ -291,7 +291,7 @@ export class VoiceConversationEngine {
       let chunkIndex = 0;
       const audioBuffers = [];
       const ttsPromises = [];
-      const chunkTimings = [];  // { idx, flushT, ttsReadyT, text }
+      const chunkTimings = [];  // { idx, flushDur, ttsDur, text }
 
       const MAX_TTS_CONCURRENT = 2;
       let activeTts = 0;
@@ -300,6 +300,7 @@ export class VoiceConversationEngine {
       const startTtsTask = (idx, text) => {
         const run = async () => {
           activeTts++;
+          const ttsChunkStart = performance.now();
           try {
             const ttsResult = await this.ttsServer.generateWav({
               refAudio: this.voiceConfig?.refAudio || "",
@@ -310,9 +311,9 @@ export class VoiceConversationEngine {
 
             if (ttsResult.success) {
               audioBuffers[idx] = ttsResult.audioBuffer;
-              const ttsReadyT = ((performance.now() - pipelineStart) / 1000).toFixed(2);
-              if (chunkTimings[idx]) chunkTimings[idx].ttsReadyT = ttsReadyT;
-              console.log(`[VoiceEngine:Text] 🔊 TTS chunk ${idx} ready (t=${ttsReadyT}s, ${ttsResult.audioBuffer.length} bytes)`);
+              const ttsDur = ((performance.now() - ttsChunkStart) / 1000).toFixed(2);
+              if (chunkTimings[idx]) chunkTimings[idx].ttsDur = ttsDur;
+              console.log(`[VoiceEngine:Text] 🔊 TTS chunk ${idx} ready (${ttsDur}s, ${ttsResult.audioBuffer.length} bytes)`);
               onEvent?.({ type: "tts-audio", audioBuffer: ttsResult.audioBuffer, chunkIndex: idx });
             } else {
               console.warn(`[VoiceEngine:Text] TTS chunk ${idx} failed:`, ttsResult.error);
@@ -345,14 +346,17 @@ export class VoiceConversationEngine {
         ttsPromises.push(promise);
       };
 
+      let lastFlushTime = pipelineStart;
       const flushSentence = (sentence) => {
         const trimmed = sentence.trim();
         if (!trimmed || trimmed.length < 2) return;
 
         const idx = chunkIndex++;
-        const flushT = ((performance.now() - pipelineStart) / 1000).toFixed(2);
-        chunkTimings[idx] = { idx, flushT, ttsReadyT: '-', text: trimmed.substring(0, 40) };
-        console.log(`[VoiceEngine:Text] 📝 Chunk ${idx}: "${trimmed}" → TTS fired (t=${flushT}s)`);
+        const now = performance.now();
+        const flushDur = ((now - lastFlushTime) / 1000).toFixed(2);
+        lastFlushTime = now;
+        chunkTimings[idx] = { idx, flushDur, ttsDur: '-', text: trimmed.substring(0, 40) };
+        console.log(`[VoiceEngine:Text] 📝 Chunk ${idx}: "${trimmed}" → TTS fired (${flushDur}s)`);
         onEvent?.({ type: "llm-chunk", text: trimmed, fullText: fullResponseText });
 
         if (trimmed.length >= 2) {
@@ -406,13 +410,13 @@ export class VoiceConversationEngine {
       console.log(`║  TTS wait       : ${String((timings.tts / 1000).toFixed(2)).padStart(6)}s  (parallel×2)                                       ║`);
       console.log(`║  ⚡ Total       : ${String((totalTime / 1000).toFixed(2)).padStart(6)}s                                                ║`);
       console.log("╠══════════════════════════════════════════════════════════════════════════════╣");
-      console.log("║  Chunk │ LLM Flush │ TTS Ready │ Text                                       ║");
+      console.log("║  Chunk │  LLM Dur  │  TTS Dur  │ Text                                       ║");
       console.log("║────────┼───────────┼───────────┼────────────────────────────────────────────║");
       for (const ct of chunkTimings) {
         if (!ct) continue;
         const idxStr = String(ct.idx).padStart(5);
-        const flushStr = (ct.flushT + 's').padStart(8);
-        const ttsStr = (ct.ttsReadyT === '-' ? '   -   ' : (ct.ttsReadyT + 's').padStart(8));
+        const flushStr = (ct.flushDur + 's').padStart(8);
+        const ttsStr = (ct.ttsDur === '-' ? '   -   ' : (ct.ttsDur + 's').padStart(8));
         const textStr = ct.text.padEnd(40).substring(0, 40);
         console.log(`║  ${idxStr} │ ${flushStr}  │ ${ttsStr}  │ ${textStr} ║`);
       }
@@ -507,7 +511,7 @@ export class VoiceConversationEngine {
       let chunkIndex = 0;
       const audioBuffers = [];  // ordered results (Buffer objects)
       const ttsPromises = [];   // all TTS promises for final await
-      const chunkTimings = [];  // { idx, flushT, ttsReadyT, text }
+      const chunkTimings = [];  // { idx, flushDur, ttsDur, text }
 
       // Concurrency-limited parallel TTS pool
       const MAX_TTS_CONCURRENT = 2;
@@ -517,6 +521,7 @@ export class VoiceConversationEngine {
       const startTtsTask = (idx, text) => {
         const run = async () => {
           activeTts++;
+          const ttsChunkStart = performance.now();
           try {
             const ttsResult = await this.ttsServer.generateWav({
               refAudio: this.voiceConfig?.refAudio || "",
@@ -527,9 +532,9 @@ export class VoiceConversationEngine {
 
             if (ttsResult.success) {
               audioBuffers[idx] = ttsResult.audioBuffer;
-              const ttsReadyT = ((performance.now() - pipelineStart) / 1000).toFixed(2);
-              if (chunkTimings[idx]) chunkTimings[idx].ttsReadyT = ttsReadyT;
-              console.log(`[VoiceEngine:Stream] 🔊 TTS chunk ${idx} ready (t=${ttsReadyT}s, ${ttsResult.audioBuffer.length} bytes)`);
+              const ttsDur = ((performance.now() - ttsChunkStart) / 1000).toFixed(2);
+              if (chunkTimings[idx]) chunkTimings[idx].ttsDur = ttsDur;
+              console.log(`[VoiceEngine:Stream] 🔊 TTS chunk ${idx} ready (${ttsDur}s, ${ttsResult.audioBuffer.length} bytes)`);
               onEvent?.({ type: "tts-audio", audioBuffer: ttsResult.audioBuffer, chunkIndex: idx });
             } else {
               console.warn(`[VoiceEngine:Stream] TTS chunk ${idx} failed:`, ttsResult.error);
@@ -563,14 +568,17 @@ export class VoiceConversationEngine {
         ttsPromises.push(promise);
       };
 
+      let lastFlushTime = performance.now();
       const flushSentence = (sentence) => {
         const trimmed = sentence.trim();
         if (!trimmed || trimmed.length < 2) return;
 
         const idx = chunkIndex++;
-        const flushT = ((performance.now() - pipelineStart) / 1000).toFixed(2);
-        chunkTimings[idx] = { idx, flushT, ttsReadyT: '-', text: trimmed.substring(0, 40) };
-        console.log(`[VoiceEngine:Stream] 📝 Chunk ${idx}: "${trimmed}" → TTS fired (t=${flushT}s)`);
+        const now = performance.now();
+        const flushDur = ((now - lastFlushTime) / 1000).toFixed(2);
+        lastFlushTime = now;
+        chunkTimings[idx] = { idx, flushDur, ttsDur: '-', text: trimmed.substring(0, 40) };
+        console.log(`[VoiceEngine:Stream] 📝 Chunk ${idx}: "${trimmed}" → TTS fired (${flushDur}s)`);
 
         // Notify frontend: LLM sentence chunk
         onEvent?.({ type: "llm-chunk", text: trimmed, fullText: fullResponseText });
@@ -635,13 +643,13 @@ export class VoiceConversationEngine {
       console.log(`║  TTS wait       : ${String((timings.tts / 1000).toFixed(2)).padStart(6)}s  (parallel×2)                                       ║`);
       console.log(`║  ⚡ Total       : ${String((totalTime / 1000).toFixed(2)).padStart(6)}s                                                ║`);
       console.log("╠══════════════════════════════════════════════════════════════════════════════╣");
-      console.log("║  Chunk │ LLM Flush │ TTS Ready │ Text                                       ║");
+      console.log("║  Chunk │  LLM Dur  │  TTS Dur  │ Text                                       ║");
       console.log("║────────┼───────────┼───────────┼────────────────────────────────────────────║");
       for (const ct of chunkTimings) {
         if (!ct) continue;
         const idxStr = String(ct.idx).padStart(5);
-        const flushStr = (ct.flushT + 's').padStart(8);
-        const ttsStr = (ct.ttsReadyT === '-' ? '   -   ' : (ct.ttsReadyT + 's').padStart(8));
+        const flushStr = (ct.flushDur + 's').padStart(8);
+        const ttsStr = (ct.ttsDur === '-' ? '   -   ' : (ct.ttsDur + 's').padStart(8));
         const textStr = ct.text.padEnd(40).substring(0, 40);
         console.log(`║  ${idxStr} │ ${flushStr}  │ ${ttsStr}  │ ${textStr} ║`);
       }

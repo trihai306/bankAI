@@ -53,6 +53,12 @@ REF_TEXT = "Đang tìm kiếm một công cụ giúp quản lý tài chính thô
 CODEC_REPO = "neuphonic/distill-neucodec"
 SAMPLE_RATE = 24000
 
+# Inference defaults — tuned for GGUF quantized models
+# Lower temperature reduces repetition/noise artifacts common in q4 models
+# Tighter top_k produces more stable speech token sequences
+DEFAULT_TEMPERATURE = 0.7
+DEFAULT_TOP_K = 35
+
 # Global state
 tts = None
 is_loaded = False
@@ -176,6 +182,8 @@ def cuda_prewarm():
                 text="xin chào",
                 ref_audio=REF_AUDIO,
                 ref_text=REF_TEXT,
+                temperature=DEFAULT_TEMPERATURE,
+                top_k=DEFAULT_TOP_K,
             )
         # Clear the dummy output from cache
         if torch.cuda.is_available():
@@ -216,7 +224,8 @@ def encode_wav_bytes(audio_data, sample_rate):
     return buf.getvalue()
 
 
-def generate_audio(gen_text, ref_audio=None, ref_text=None, speed=1.0, response_format="json"):
+def generate_audio(gen_text, ref_audio=None, ref_text=None, speed=1.0, response_format="json",
+                   temperature=None, top_k=None):
     """Generate audio with torch.inference_mode() for maximum speed.
 
     If client sends ref_audio/ref_text, use those.
@@ -225,6 +234,10 @@ def generate_audio(gen_text, ref_audio=None, ref_text=None, speed=1.0, response_
     import torch
 
     start = time.time()
+
+    # Use provided values or fall back to optimized defaults
+    actual_temperature = temperature if temperature is not None else DEFAULT_TEMPERATURE
+    actual_top_k = top_k if top_k is not None else DEFAULT_TOP_K
 
     # Use provided ref or fall back to default (training dataset)
     actual_ref_audio = ref_audio if (ref_audio and os.path.isfile(ref_audio)) else REF_AUDIO
@@ -237,6 +250,8 @@ def generate_audio(gen_text, ref_audio=None, ref_text=None, speed=1.0, response_
                 text=gen_text,
                 ref_audio=actual_ref_audio,
                 ref_text=actual_ref_text,
+                temperature=actual_temperature,
+                top_k=actual_top_k,
             )
     gen_time = time.time() - gen_start
 
@@ -265,9 +280,13 @@ def generate_audio(gen_text, ref_audio=None, ref_text=None, speed=1.0, response_
     }, None
 
 
-def generate_audio_stream(gen_text, ref_audio=None, ref_text=None):
+def generate_audio_stream(gen_text, ref_audio=None, ref_text=None,
+                          temperature=None, top_k=None):
     """Generator: yield (wav_bytes, chunk_index) with torch.inference_mode()."""
     import torch
+
+    actual_temperature = temperature if temperature is not None else DEFAULT_TEMPERATURE
+    actual_top_k = top_k if top_k is not None else DEFAULT_TOP_K
 
     actual_ref_audio = ref_audio if (ref_audio and os.path.isfile(ref_audio)) else REF_AUDIO
     actual_ref_text = ref_text if ref_text else REF_TEXT
@@ -279,6 +298,8 @@ def generate_audio_stream(gen_text, ref_audio=None, ref_text=None):
                 text=gen_text,
                 ref_audio=actual_ref_audio,
                 ref_text=actual_ref_text,
+                temperature=actual_temperature,
+                top_k=actual_top_k,
             ):
                 if len(audio_chunk) > 0:
                     wav_bytes = encode_wav_bytes(audio_chunk, SAMPLE_RATE)
@@ -356,15 +377,22 @@ async def generate(request: Request):
         ref_text = data.get("ref_text")
         speed = float(data.get("speed", 1.0))
         response_format = data.get("response_format", "json")
+        temperature = data.get("temperature")
+        top_k = data.get("top_k")
+        if temperature is not None:
+            temperature = float(temperature)
+        if top_k is not None:
+            top_k = int(top_k)
 
-        print(f"[TTS-Server] Generating: '{gen_text[:80]}...' (format={response_format})", flush=True)
+        print(f"[TTS-Server] Generating: '{gen_text[:80]}...' (format={response_format}, temp={temperature or DEFAULT_TEMPERATURE}, top_k={top_k or DEFAULT_TOP_K})", flush=True)
 
         # Run blocking inference in thread pool to not block event loop
         loop = asyncio.get_event_loop()
 
         if response_format == "wav":
             wav_bytes, timings = await loop.run_in_executor(
-                None, lambda: generate_audio(gen_text, ref_audio, ref_text, speed, "wav")
+                None, lambda: generate_audio(gen_text, ref_audio, ref_text, speed, "wav",
+                                              temperature, top_k)
             )
             print(f"[TTS-Server] Done in {timings['total']}s", flush=True)
 
@@ -378,7 +406,8 @@ async def generate(request: Request):
             )
         else:
             result, _ = await loop.run_in_executor(
-                None, lambda: generate_audio(gen_text, ref_audio, ref_text, speed, "json")
+                None, lambda: generate_audio(gen_text, ref_audio, ref_text, speed, "json",
+                                              temperature, top_k)
             )
             print(f"[TTS-Server] Done: {result.get('output', 'N/A')}", flush=True)
             return JSONResponse(content=result)
@@ -401,6 +430,12 @@ async def generate_stream(request: Request):
 
         ref_audio = data.get("ref_audio")
         ref_text = data.get("ref_text")
+        temperature = data.get("temperature")
+        top_k = data.get("top_k")
+        if temperature is not None:
+            temperature = float(temperature)
+        if top_k is not None:
+            top_k = int(top_k)
 
         print(f"[TTS-Server] Streaming: '{gen_text[:80]}...'", flush=True)
 
@@ -417,7 +452,8 @@ async def generate_stream(request: Request):
 
             def producer():
                 try:
-                    for wav_bytes, chunk_idx in generate_audio_stream(gen_text, ref_audio, ref_text):
+                    for wav_bytes, chunk_idx in generate_audio_stream(gen_text, ref_audio, ref_text,
+                                                                       temperature, top_k):
                         q.put(("chunk", wav_bytes, chunk_idx))
                     q.put(("done", None, None))
                 except Exception as e:
