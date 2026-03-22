@@ -105,4 +105,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
         generate: (text, voice, rate) => ipcRenderer.invoke('edge-tts:generate', { text, voice, rate }),
         getVoices: () => ipcRenderer.invoke('edge-tts:voices'),
     },
+
+    // System Setup / Dependency Check
+    setup: {
+        checkAll: () => ipcRenderer.invoke('setup:check-all'),
+        installFfmpeg: () => ipcRenderer.invoke('setup:install-ffmpeg'),
+        installPythonEnv: () => ipcRenderer.invoke('setup:install-python-env'),
+        installNpmDeps: () => ipcRenderer.invoke('setup:install-npm-deps'),
+        onProgress: (callback) => ipcRenderer.on('setup:progress', (_, data) => callback(data)),
+        removeProgressListener: () => ipcRenderer.removeAllListeners('setup:progress'),
+    },
 });

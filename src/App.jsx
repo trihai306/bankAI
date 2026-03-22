@@ -1,3 +1,4 @@
+import { useState, useCallback } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
@@ -10,8 +11,20 @@ import VoiceChat from './pages/VoiceChat'
 import History from './pages/History'
 import Settings from './pages/Settings'
 import HealthCheck from './pages/HealthCheck'
+import SystemSetup from './pages/SystemSetup'
 
 function App() {
+  const [setupDone, setSetupDone] = useState(false)
+
+  const handleSetupComplete = useCallback(() => {
+    setSetupDone(true)
+  }, [])
+
+  // Show system setup screen first
+  if (!setupDone) {
+    return <SystemSetup onComplete={handleSetupComplete} />
+  }
+
   return (
     <Layout>
       <Routes>

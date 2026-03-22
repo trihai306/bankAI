@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { initDB, dbAPI } from './db.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -184,6 +184,210 @@ app.on('before-quit', () => {
 
 // IPC Handlers
 ipcMain.handle('app:version', () => app.getVersion());
+
+// ===========================================
+// System Setup / Dependency Check IPC
+// ===========================================
+
+function checkCommand(cmd) {
+    try {
+        const result = execSync(`which ${cmd} 2>/dev/null || where ${cmd} 2>nul`, {
+            encoding: 'utf-8',
+            timeout: 5000,
+            stdio: ['pipe', 'pipe', 'pipe'],
+        }).trim();
+        return result ? result.split('\n')[0] : null;
+    } catch {
+        return null;
+    }
+}
+
+function getCommandVersion(cmd, args = ['--version']) {
+    try {
+        const result = execSync(`${cmd} ${args.join(' ')}`, {
+            encoding: 'utf-8',
+            timeout: 5000,
+            stdio: ['pipe', 'pipe', 'pipe'],
+        }).trim();
+        return result.split('\n')[0];
+    } catch {
+        return null;
+    }
+}
+
+ipcMain.handle('setup:check-all', async () => {
+    const pythonDir = path.join(__dirname, '..', 'python');
+    const projectRoot = path.join(__dirname, '..');
+
+    // 1. Check ffmpeg
+    const ffmpegPath = checkCommand('ffmpeg');
+    const ffmpegVersion = ffmpegPath ? getCommandVersion('ffmpeg', ['-version']) : null;
+
+    // 2. Check Python 3.11+
+    let pythonPath = null;
+    let pythonVersion = null;
+    for (const cmd of ['python3', 'python']) {
+        const p = checkCommand(cmd);
+        if (p) {
+            const ver = getCommandVersion(cmd, ['--version']);
+            if (ver) {
+                const match = ver.match(/(\d+)\.(\d+)/);
+                if (match && parseInt(match[1]) === 3 && parseInt(match[2]) >= 11) {
+                    pythonPath = p;
+                    pythonVersion = ver;
+                    break;
+                }
+            }
+        }
+    }
+
+    // 3. Check Python venv
+    const venvPython = path.join(pythonDir, 'venv', 'bin', 'python');
+    const venvExists = fs.existsSync(venvPython);
+
+    // 4. Check VieNeu-TTS venv
+    const vieneuVenv = path.join(pythonDir, 'VieNeu-TTS', '.venv', 'bin', 'python');
+    const vieneuVenvExists = fs.existsSync(vieneuVenv);
+
+    // 5. Check node-llama-cpp
+    const llamaDir = path.join(projectRoot, 'node_modules', 'node-llama-cpp');
+    const llamaInstalled = fs.existsSync(llamaDir);
+
+    // 6. Check nodejs-whisper
+    const whisperDir = path.join(projectRoot, 'node_modules', 'nodejs-whisper');
+    const whisperInstalled = fs.existsSync(whisperDir);
+
+    // 7. Check CUDA
+    const nvccPath = checkCommand('nvcc');
+    const cudaVersion = nvccPath ? getCommandVersion('nvcc', ['--version']) : null;
+    let cudaAvailable = !!nvccPath;
+    // Also check nvidia-smi
+    if (!cudaAvailable) {
+        const nvidiaSmi = checkCommand('nvidia-smi');
+        cudaAvailable = !!nvidiaSmi;
+    }
+
+    // 8. Check torch installed in venv
+    let torchInstalled = false;
+    if (venvExists) {
+        try {
+            execSync(`${venvPython} -c "import torch; print(torch.__version__)"`, {
+                encoding: 'utf-8',
+                timeout: 10000,
+                stdio: ['pipe', 'pipe', 'pipe'],
+            });
+            torchInstalled = true;
+        } catch {}
+    }
+
+    // 9. Check TTS server script
+    const ttsServerScript = path.join(pythonDir, 'vieneu_tts_server.py');
+    const ttsServerExists = fs.existsSync(ttsServerScript);
+
+    // 10. Check better-sqlite3
+    const sqliteDir = path.join(projectRoot, 'node_modules', 'better-sqlite3');
+    const sqliteInstalled = fs.existsSync(sqliteDir);
+
+    const results = {
+        ffmpeg: { installed: !!ffmpegPath, path: ffmpegPath, version: ffmpegVersion },
+        python: { installed: !!pythonPath, path: pythonPath, version: pythonVersion },
+        pythonVenv: { installed: venvExists, path: venvPython },
+        vieneuTTS: { installed: vieneuVenvExists && ttsServerExists, venvExists: vieneuVenvExists, serverScript: ttsServerExists },
+        nodeLlamaCpp: { installed: llamaInstalled },
+        nodejsWhisper: { installed: whisperInstalled },
+        cuda: { available: cudaAvailable, nvcc: nvccPath, version: cudaVersion },
+        torch: { installed: torchInstalled },
+        sqlite: { installed: sqliteInstalled },
+        platform: { system: process.platform, arch: process.arch, nodeVersion: process.version },
+    };
+
+    // Overall readiness
+    results.allReady = results.ffmpeg.installed &&
+        results.python.installed &&
+        results.pythonVenv.installed &&
+        results.vieneuTTS.installed &&
+        results.nodeLlamaCpp.installed &&
+        results.nodejsWhisper.installed &&
+        results.sqlite.installed;
+
+    return results;
+});
+
+ipcMain.handle('setup:install-ffmpeg', async () => {
+    try {
+        // Try brew on macOS
+        if (process.platform === 'darwin') {
+            const brew = checkCommand('brew');
+            if (brew) {
+                execSync('brew install ffmpeg', { encoding: 'utf-8', timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'] });
+                return { success: true, message: 'ffmpeg installed via Homebrew' };
+            }
+            return { success: false, error: 'Homebrew not found. Install Homebrew first: https://brew.sh' };
+        }
+        // Linux
+        if (process.platform === 'linux') {
+            execSync('sudo apt-get install -y ffmpeg || sudo yum install -y ffmpeg', { encoding: 'utf-8', timeout: 300000 });
+            return { success: true };
+        }
+        return { success: false, error: 'Please install ffmpeg manually' };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+ipcMain.handle('setup:install-python-env', async (event) => {
+    const pythonDir = path.join(__dirname, '..', 'python');
+    const setupScript = path.join(pythonDir, 'setup_env.py');
+
+    return new Promise((resolve) => {
+        let pythonCmd = 'python3';
+        if (!checkCommand('python3')) pythonCmd = 'python';
+
+        const proc = spawn(pythonCmd, [setupScript, 'setup'], {
+            cwd: pythonDir,
+            stdio: ['pipe', 'pipe', 'pipe'],
+        });
+
+        let output = '';
+        proc.stdout.on('data', (data) => {
+            const line = data.toString().trim();
+            output += line + '\n';
+            try {
+                const parsed = JSON.parse(line);
+                // Forward progress to renderer
+                const win = BrowserWindow.getAllWindows()[0];
+                if (win) win.webContents.send('setup:progress', parsed);
+            } catch {}
+        });
+
+        proc.stderr.on('data', (data) => {
+            output += data.toString();
+        });
+
+        proc.on('close', (code) => {
+            resolve({ success: code === 0, output });
+        });
+
+        proc.on('error', (err) => {
+            resolve({ success: false, error: err.message });
+        });
+    });
+});
+
+ipcMain.handle('setup:install-npm-deps', async () => {
+    try {
+        const projectRoot = path.join(__dirname, '..');
+        execSync('npm install', {
+            cwd: projectRoot,
+            encoding: 'utf-8',
+            timeout: 300000,
+            stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
 
 // Database IPC
 ipcMain.handle('db:stats', () => dbAPI.getDashboardStats());
