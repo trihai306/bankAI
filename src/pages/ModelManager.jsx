@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Brain, Cpu, HardDrive, Zap, Download, Trash2, RefreshCw, AlertCircle, Plus, Check } from 'lucide-react'
 
 const defaultModels = [
@@ -36,7 +36,6 @@ const defaultModels = [
 
 export default function ModelManager() {
     const [models, setModels] = useState(defaultModels)
-    const [isLoading, setIsLoading] = useState(false)
     const [activeTab, setActiveTab] = useState('all')
 
     const tabs = [

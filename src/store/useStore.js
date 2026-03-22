@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-const useStore = create((set, get) => ({
+const useStore = create((set) => ({
     stats: {
         totalCalls: 0,
         todayCalls: 0,

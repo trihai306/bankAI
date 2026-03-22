@@ -1,0 +1,7 @@
+{
+  "name": "demo_voice",
+  "ref_text": "Đúng 6 giờ chiều, ở ga xuống, người nào mặc ta, cầm máy ảnh, mặc cả xe đến phố Tiện An là đích đấy. Đúng 6 giờ. ",
+  "source_audio": "/Users/hainc/AIbank/python/voice_dataset/demo_voice/wavs/segment_0010.wav",
+  "duration_s": 3.0,
+  "sample_rate": 24000
+}

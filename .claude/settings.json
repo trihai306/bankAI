@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "electron-mcp": {
+      "command": "npx",
+      "args": ["-y", "@kanishka-namdeo/electron-mcp-server"],
+      "env": {
+        "LOG_LEVEL": "info",
+        "NODE_ENV": "development"
+      }
+    },
+    "electron-playwright-mcp": {
+      "command": "npx",
+      "args": ["-y", "electron-playwright-mcp", "./"],
+      "env": {
+        "ELECTRON_APP_PATH": "./"
+      }
+    }
+  }
+}
