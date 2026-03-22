@@ -1,30 +1,35 @@
 {
-  "name": "ai-voice-bot",
+  "name": "bank-ai-auto",
   "private": true,
   "version": "1.0.0",
-  "description": "AI Voice Bot - Hệ thống Bot AI Trả lời Cuộc gọi Tự động",
+  "description": "Bank AI Auto - Hệ thống Bot AI Trả lời Cuộc gọi Tự động",
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
-    "dev:electron": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && NODE_ENV=development electron .\"",
+    "dev:electron": "concurrently \"npm run dev\" \"wait-on http://localhost:5174 && cross-env NODE_ENV=development electron .\"",
     "build": "vite build",
     "build:electron": "npm run build && electron-builder",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start": "electron ."
+    "start": "electron .",
+    "postinstall": "electron-rebuild"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",
     "clsx": "^2.1.1",
+    "cross-env": "^10.1.0",
     "edge-tts": "^1.0.1",
     "lucide-react": "^0.511.0",
+    "node-llama-cpp": "^3.15.1",
+    "nodejs-whisper": "^0.2.9",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.13.0",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
     "@eslint/js": "^9.39.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
@@ -37,34 +42,64 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "png-to-ico": "^3.0.1",
     "postcss": "^8.5.6",
+    "sharp": "^0.34.5",
     "tailwindcss": "^3.4.19",
     "vite": "^7.2.4",
     "wait-on": "^9.0.3"
   },
   "build": {
-    "appId": "com.aibank.voice-bot",
-    "productName": "AI Voice Bot",
+    "appId": "com.bankai.auto",
+    "productName": "Bank AI Auto",
+    "asar": false,
     "directories": {
       "buildResources": "build",
       "output": "release"
     },
     "files": [
       "dist/**/*",
-      "electron/**/*"
+      "electron/**/*",
+      "node_modules/**/*"
     ],
-    "mac": {
-      "category": "public.app-category.utilities",
-      "target": [
-        "dmg",
-        "zip"
-      ]
-    },
+    "extraResources": [
+      {
+        "from": "models/",
+        "to": "models/",
+        "filter": [
+          "**/*.gguf"
+        ]
+      },
+      {
+        "from": "python/",
+        "to": "python/",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/outputs/**",
+          "!**/*.pyc",
+          "!**/*.pdb",
+          "!**/gradio/media_assets/**",
+          "!**/gradio/templates/**",
+          "!**/gradio/node/**",
+          "!**/share/doc/**",
+          "!**/share/man/**"
+        ]
+      },
+      {
+        "from": "node_modules/nodejs-whisper/cpp/whisper.cpp/",
+        "to": "whisper/",
+        "filter": [
+          "build/bin/**",
+          "models/ggml-*.bin"
+        ]
+      }
+    ],
     "win": {
       "target": [
-        "nsis",
-        "portable"
-      ]
+        "dir"
+      ],
+      "icon": "build/icon.ico"
     }
   }
 }

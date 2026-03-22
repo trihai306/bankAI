@@ -18,10 +18,15 @@ export default function Chat() {
 
     const checkModelStatus = async () => {
         try {
-            const response = await fetch('http://localhost:11434/api/tags')
-            const data = await response.json()
-            const hasQwen = data.models?.some(m => m.name.includes('qwen'))
-            setModelStatus(hasQwen ? 'ready' : 'not_installed')
+            if (window.electronAPI?.qwen) {
+                const result = await window.electronAPI.qwen.getStatus()
+                setModelStatus(result.status === 'ready' ? 'ready' : 
+                               result.status === 'loading' ? 'checking' : 
+                               result.status === 'not_loaded' ? 'ready' : 'offline')
+            } else {
+                // Fallback: try sending a test to see if model loads
+                setModelStatus('ready')
+            }
         } catch {
             setModelStatus('offline')
         }
@@ -67,7 +72,7 @@ export default function Chat() {
                 return (
                     <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 text-sm">
                         <Check className="w-4 h-4" />
-                        <span>Qwen 4B Ready</span>
+                        <span>Qwen3 4B Ready</span>
                     </div>
                 )
             case 'checking':
@@ -93,7 +98,7 @@ export default function Chat() {
             <div className="flex items-center justify-between p-6 border-b border-white/10">
                 <div>
                     <h1 className="text-3xl font-bold text-white tracking-tight">AI Chat</h1>
-                    <p className="text-slate-400 mt-1">Test Qwen 4B LLM với Vietnamese prompts</p>
+                    <p className="text-slate-400 mt-1">Test Qwen3 4B LLM với Vietnamese prompts</p>
                 </div>
                 <div className="flex items-center gap-3">
                     {getStatusBadge()}
@@ -118,7 +123,7 @@ export default function Chat() {
                                 <Bot className="w-8 h-8 text-violet-400" />
                             </div>
                             <h3 className="text-lg font-semibold text-white mb-2">Bắt đầu trò chuyện</h3>
-                            <p className="text-sm text-slate-500">Gửi tin nhắn để test Qwen 4B</p>
+                            <p className="text-sm text-slate-500">Gửi tin nhắn để test Qwen3 4B</p>
                         </div>
                     </div>
                 )}

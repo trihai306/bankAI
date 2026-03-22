@@ -1,0 +1,20 @@
+# Core ML — CUDA 12.8 (RTX 5070 / Blackwell sm_120 compatible)
+# torch/torchaudio 2.8.x is the latest version with native soundfile backend.
+# torchaudio 2.9+ requires torchcodec which has DLL issues on Windows.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch>=2.8.0,<2.9.0
+torchaudio>=2.8.0,<2.9.0
+torchvision>=0.23.0,<0.24.0
+
+# VieNeu-TTS dependencies (VieNeu-TTS itself installed via pip install -e)
+soundfile>=0.13.0
+librosa>=0.10.2
+numpy>=1.24.0,<=1.26.4  # VieNeu-TTS requires numpy<=1.26.4
+
+# TTS Server (FastAPI)
+fastapi>=0.115.0
+uvicorn>=0.34.0
+
+# Utilities
+jieba>=0.42.1
+pypinyin>=0.53.0

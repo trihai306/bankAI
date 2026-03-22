@@ -1,17 +1,20 @@
 import { useState, useEffect } from 'react'
-import { Settings as SettingsIcon, Save, Globe, Bell, Shield, Mic, Brain, Server, Check, AlertCircle } from 'lucide-react'
+import { Settings as SettingsIcon, Save, Globe, Bell, Shield, Mic, Brain, Server, Check, AlertCircle, Rocket } from 'lucide-react'
 
 export default function Settings() {
     const [settings, setSettings] = useState({
         language: 'vi-VN',
         autoAnswer: true,
         voiceEngine: 'vits',
-        llmModel: 'llama-3.2-8b',
+        llmModel: 'qwen3-4b',
         notifications: true,
         apiEndpoint: 'http://localhost:8000',
     })
     const [isSaving, setIsSaving] = useState(false)
     const [saveSuccess, setSaveSuccess] = useState(false)
+    const [autoPreload, setAutoPreload] = useState(true)
+
+
 
     useEffect(() => {
         const loadSettings = async () => {
@@ -27,7 +30,18 @@ export default function Settings() {
             }
         }
         loadSettings()
+
+        // Load auto-preload setting
+        const loadPreloadSetting = async () => {
+            try {
+                const result = await window.electronAPI?.preload?.getAutoPreload()
+                if (result) setAutoPreload(result.enabled)
+            } catch { /* ignore */ }
+        }
+        loadPreloadSetting()
     }, [])
+
+
 
     const handleSave = async () => {
         setIsSaving(true)
@@ -50,6 +64,8 @@ export default function Settings() {
         setSettings(prev => ({ ...prev, [key]: value }))
     }
 
+
+
     return (
         <div className="space-y-8">
             {/* Header */}
@@ -61,7 +77,7 @@ export default function Settings() {
                 <button
                     onClick={handleSave}
                     disabled={isSaving}
-                    className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+                    className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
                 >
                     {saveSuccess ? (
                         <>
@@ -83,10 +99,11 @@ export default function Settings() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
                 {/* General Settings */}
                 <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-6">
                     <div className="flex items-center gap-3 mb-6">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
                             <SettingsIcon className="w-5 h-5 text-white" />
                         </div>
                         <h2 className="text-lg font-bold text-white">Cài đặt chung</h2>
@@ -98,7 +115,7 @@ export default function Settings() {
                             <select
                                 value={settings.language}
                                 onChange={(e) => updateSetting('language', e.target.value)}
-                                className="w-full px-4 py-3 rounded-xl bg-[#0a0a12] border border-white/10 text-white focus:outline-none focus:border-violet-500/50 transition-colors appearance-none cursor-pointer"
+                                className="w-full px-4 py-3 rounded-xl bg-[#0a0a12] border border-white/10 text-white focus:outline-none focus:border-cyan-500/50 transition-colors appearance-none cursor-pointer"
                             >
                                 <option value="vi-VN">Tiếng Việt</option>
                                 <option value="en-US">English</option>
@@ -112,7 +129,7 @@ export default function Settings() {
                             </div>
                             <button
                                 onClick={() => updateSetting('autoAnswer', !settings.autoAnswer)}
-                                className={`relative w-12 h-6 rounded-full transition-colors ${settings.autoAnswer ? 'bg-violet-500' : 'bg-white/10'
+                                className={`relative w-12 h-6 rounded-full transition-colors ${settings.autoAnswer ? 'bg-cyan-500' : 'bg-white/10'
                                     }`}
                             >
                                 <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${settings.autoAnswer ? 'translate-x-6' : 'translate-x-0.5'
@@ -127,10 +144,36 @@ export default function Settings() {
                             </div>
                             <button
                                 onClick={() => updateSetting('notifications', !settings.notifications)}
-                                className={`relative w-12 h-6 rounded-full transition-colors ${settings.notifications ? 'bg-violet-500' : 'bg-white/10'
+                                className={`relative w-12 h-6 rounded-full transition-colors ${settings.notifications ? 'bg-cyan-500' : 'bg-white/10'
                                     }`}
                             >
                                 <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${settings.notifications ? 'translate-x-6' : 'translate-x-0.5'
+                                    }`} />
+                            </button>
+                        </div>
+
+                        <div className="flex items-center justify-between py-3">
+                            <div>
+                                <p className="font-medium text-white flex items-center gap-2">
+                                    <Rocket className="w-4 h-4 text-cyan-400" />
+                                    Nạp sẵn Models
+                                </p>
+                                <p className="text-sm text-slate-500">Tự động tải Whisper + LLM khi khởi động app</p>
+                            </div>
+                            <button
+                                onClick={async () => {
+                                    const newValue = !autoPreload
+                                    setAutoPreload(newValue)
+                                    try {
+                                        await window.electronAPI?.preload?.setAutoPreload(newValue)
+                                    } catch (e) {
+                                        console.error('Failed to save auto-preload:', e)
+                                    }
+                                }}
+                                className={`relative w-12 h-6 rounded-full transition-colors ${autoPreload ? 'bg-cyan-500' : 'bg-white/10'
+                                    }`}
+                            >
+                                <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${autoPreload ? 'translate-x-6' : 'translate-x-0.5'
                                     }`} />
                             </button>
                         </div>
@@ -152,7 +195,7 @@ export default function Settings() {
                             <select
                                 value={settings.voiceEngine}
                                 onChange={(e) => updateSetting('voiceEngine', e.target.value)}
-                                className="w-full px-4 py-3 rounded-xl bg-[#0a0a12] border border-white/10 text-white focus:outline-none focus:border-violet-500/50 transition-colors appearance-none cursor-pointer"
+                                className="w-full px-4 py-3 rounded-xl bg-[#0a0a12] border border-white/10 text-white focus:outline-none focus:border-cyan-500/50 transition-colors appearance-none cursor-pointer"
                             >
                                 <option value="vits">VITS Vietnamese</option>
                                 <option value="coqui">Coqui TTS</option>
@@ -185,20 +228,19 @@ export default function Settings() {
                             <select
                                 value={settings.llmModel}
                                 onChange={(e) => updateSetting('llmModel', e.target.value)}
-                                className="w-full px-4 py-3 rounded-xl bg-[#0a0a12] border border-white/10 text-white focus:outline-none focus:border-violet-500/50 transition-colors appearance-none cursor-pointer"
+                                className="w-full px-4 py-3 rounded-xl bg-[#0a0a12] border border-white/10 text-white focus:outline-none focus:border-cyan-500/50 transition-colors appearance-none cursor-pointer"
                             >
+                                <option value="qwen3-4b">Qwen3 4B</option>
                                 <option value="llama-3.2-8b">Llama 3.2 8B</option>
-                                <option value="gemma-2-9b">Gemma 2 9B</option>
-                                <option value="phi-3-mini">Phi-3 Mini</option>
                             </select>
                         </div>
 
                         <div className="p-4 rounded-xl bg-slate-500/5 border border-white/5">
                             <div className="flex items-center gap-2 text-slate-400 mb-2">
                                 <AlertCircle className="w-4 h-4" />
-                                <span className="font-medium text-sm">Ollama Local</span>
+                                <span className="font-medium text-sm">node-llama-cpp Local</span>
                             </div>
-                            <p className="text-sm text-slate-500">Yêu cầu Ollama đang chạy trên máy</p>
+                            <p className="text-sm text-slate-500">Chạy model GGUF trực tiếp, không cần Ollama</p>
                         </div>
                     </div>
                 </div>
@@ -219,12 +261,12 @@ export default function Settings() {
                                 type="text"
                                 value={settings.apiEndpoint}
                                 onChange={(e) => updateSetting('apiEndpoint', e.target.value)}
-                                className="w-full px-4 py-3 rounded-xl bg-[#0a0a12] border border-white/10 text-white font-mono text-sm focus:outline-none focus:border-violet-500/50 transition-colors"
+                                className="w-full px-4 py-3 rounded-xl bg-[#0a0a12] border border-white/10 text-white font-mono text-sm focus:outline-none focus:border-cyan-500/50 transition-colors"
                                 placeholder="http://localhost:8000"
                             />
                         </div>
 
-                        <button className="w-full py-3 rounded-xl bg-white/5 border border-white/10 text-slate-400 font-medium hover:text-white hover:border-violet-500/30 transition-all">
+                        <button className="w-full py-3 rounded-xl bg-white/5 border border-white/10 text-slate-400 font-medium hover:text-white hover:border-cyan-500/30 transition-all">
                             Kiểm tra kết nối
                         </button>
                     </div>
@@ -233,3 +275,4 @@ export default function Settings() {
         </div>
     )
 }
+

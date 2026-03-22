@@ -3,14 +3,14 @@ import { Brain, Cpu, HardDrive, Zap, Download, Trash2, RefreshCw, AlertCircle, P
 
 const defaultModels = [
     {
-        id: 'qwen-4b',
-        name: 'Qwen 4B',
+        id: 'qwen3-4b',
+        name: 'Qwen3 4B',
         type: 'LLM',
-        size: '2.3 GB',
+        size: '2.7 GB',
         status: 'downloading',
         params: '4B',
         context: '128K',
-        description: 'Model AI nhẹ cho xử lý văn bản, sửa lỗi tiếng Việt - Balance tốt giữa tốc độ và accuracy'
+        description: 'Model AI nhẹ cho xử lý văn bản, sửa lỗi tiếng Việt - Chạy qua node-llama-cpp (GGUF)'
     },
     {
         id: 'whisper-medium',
@@ -23,14 +23,14 @@ const defaultModels = [
         description: 'Model nhận dạng giọng nói tiếng Việt accuracy cao (~93%), balance tốt giữa tốc độ và chất lượng'
     },
     {
-        id: 'f5-tts-vi',
-        name: 'F5-TTS Vietnamese',
+        id: 'vieneu-tts',
+        name: 'VieNeu-TTS 0.3B',
         type: 'TTS',
-        size: '1.2 GB',
+        size: '~600 MB (GGUF q4)',
         status: 'installed',
-        params: '1B',
+        params: '0.3B',
         context: '-',
-        description: 'Model text-to-speech tiếng Việt, tạo giọng nói tự nhiên từ văn bản'
+        description: 'Model TTS tiếng Việt — GGUF backbone (CPU) + codec (CUDA), FastAPI server port 8179'
     },
 ]
 

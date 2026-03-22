@@ -186,13 +186,13 @@ export default function Dashboard() {
                             </div>
                             <div>
                                 <h3 className="font-bold text-white text-sm md:text-base">LLM Engine</h3>
-                                <p className="text-xs text-slate-400 mt-0.5">Ollama Local</p>
+                                <p className="text-xs text-slate-400 mt-0.5">node-llama-cpp</p>
                             </div>
                         </div>
                         <div className="space-y-2 md:space-y-3 relative">
                             <div className="flex justify-between py-2 border-b border-white/5">
                                 <span className="text-xs md:text-sm text-slate-400">Model</span>
-                                <span className="text-xs md:text-sm font-medium text-white">Llama 3.2 8B</span>
+                                <span className="text-xs md:text-sm font-medium text-white">Qwen3 4B</span>
                             </div>
                             <div className="flex justify-between py-2 border-b border-white/5">
                                 <span className="text-xs md:text-sm text-slate-400">Context</span>
