@@ -8,6 +8,26 @@ import { initDB, dbAPI } from './db.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Cross-platform Python path resolver
+// Supports: regular venv (Scripts/python.exe), conda env (python.exe at root), and Linux (bin/python)
+function getVenvPython(baseDir) {
+    const pythonDir = baseDir || path.join(__dirname, '..', 'python');
+    const venvDir = path.join(pythonDir, 'venv');
+    const isWindows = process.platform === 'win32';
+
+    if (isWindows) {
+        // Check Scripts/python.exe first (standard venv)
+        const scriptsPath = path.join(venvDir, 'Scripts', 'python.exe');
+        if (fs.existsSync(scriptsPath)) return scriptsPath;
+        // Fallback: conda env has python.exe at venv root
+        const rootPath = path.join(venvDir, 'python.exe');
+        if (fs.existsSync(rootPath)) return rootPath;
+        // Last resort
+        return scriptsPath;
+    }
+    return path.join(venvDir, 'bin', 'python');
+}
+
 // Prevent EPIPE crashes from child process pipes
 process.on('uncaughtException', (err) => {
     if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') return;
@@ -31,13 +51,14 @@ function startTTSServer() {
     if (ttsServerStopping) return;
 
     const pythonDir = path.join(__dirname, '..', 'python');
-    const venvPython = path.join(pythonDir, 'venv', 'bin', 'python');
-    const serverScript = path.join(pythonDir, 'tts_server.py');
+    const venvPython = getVenvPython(pythonDir);
+    const serverScript = path.join(pythonDir, 'vieneu_tts_server.py');
 
     console.log('Starting TTS server...');
     ttsServerProcess = spawn(venvPython, [serverScript, String(TTS_SERVER_PORT)], {
         cwd: pythonDir,
         stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
     });
 
     ttsServerProcess.stdout.on('data', (data) => {
@@ -164,7 +185,7 @@ function createWindow() {
     });
 
     if (isDev) {
-        mainWindow.loadURL('http://localhost:5173');
+        mainWindow.loadURL('http://localhost:5174');
         mainWindow.webContents.openDevTools();
     } else {
         mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
@@ -262,12 +283,15 @@ ipcMain.handle('setup:check-all', async () => {
         }
     }
 
-    // 3. Check Python venv
-    const venvPython = path.join(pythonDir, 'venv', 'bin', 'python');
+    // 3. Check Python venv (cross-platform)
+    const venvPython = getVenvPython(pythonDir);
     const venvExists = fs.existsSync(venvPython);
 
-    // 4. Check VieNeu-TTS venv
-    const vieneuVenv = path.join(pythonDir, 'VieNeu-TTS', '.venv', 'bin', 'python');
+    // 4. Check VieNeu-TTS venv (cross-platform)
+    const vieneuVenvDir = path.join(pythonDir, 'VieNeu-TTS', '.venv');
+    const vieneuVenv = process.platform === 'win32'
+        ? (fs.existsSync(path.join(vieneuVenvDir, 'Scripts', 'python.exe')) ? path.join(vieneuVenvDir, 'Scripts', 'python.exe') : path.join(vieneuVenvDir, 'python.exe'))
+        : path.join(vieneuVenvDir, 'bin', 'python');
     const vieneuVenvExists = fs.existsSync(vieneuVenv);
 
     // 5. Check node-llama-cpp
@@ -292,7 +316,7 @@ ipcMain.handle('setup:check-all', async () => {
     let torchInstalled = false;
     if (venvExists) {
         try {
-            execSync(`${venvPython} -c "import torch; print(torch.__version__)"`, {
+            execSync(`"${venvPython}" -c "import torch; print(torch.__version__)"`, {
                 encoding: 'utf-8',
                 timeout: 10000,
                 stdio: ['pipe', 'pipe', 'pipe'],
@@ -487,7 +511,7 @@ const REF_AUDIO_DIR = path.join(__dirname, '..', 'python', 'ref_audio');
 function runPython(args) {
     return new Promise((resolve, reject) => {
         const pythonDir = path.join(__dirname, '..', 'python');
-        const venvPython = path.join(pythonDir, 'venv', 'bin', 'python');
+        const venvPython = getVenvPython(pythonDir);
         const PYTHON_SCRIPT = path.join(pythonDir, 'f5_tts.py');
         const python = spawn(venvPython, [PYTHON_SCRIPT, ...args], {
             cwd: pythonDir
@@ -1079,7 +1103,7 @@ ipcMain.handle('training:add-sample', async (event, { question, answer, targetFi
 ipcMain.handle('training:build-model', async () => {
     try {
         const pythonDir = path.join(__dirname, '..', 'python');
-        const venvPython = path.join(pythonDir, 'venv', 'bin', 'python');
+        const venvPython = getVenvPython(pythonDir);
         const trainScript = path.join(pythonDir, 'train_qwen.py');
 
         // Check if script exists
@@ -1424,7 +1448,7 @@ ipcMain.handle('tts:generate-stream', async (event, config) => {
 ipcMain.handle('tts:get-training-script', async () => {
     try {
         const pythonDir = path.join(__dirname, '..', 'python');
-        const venvPython = path.join(pythonDir, 'venv', 'bin', 'python');
+        const venvPython = getVenvPython(pythonDir);
         const script = path.join(pythonDir, 'auto_voice_trainer.py');
         return new Promise((resolve) => {
             let stdout = '';
@@ -1442,7 +1466,7 @@ ipcMain.handle('tts:get-training-script', async () => {
 ipcMain.handle('tts:auto-process', async (event, audioPath) => {
     try {
         const pythonDir = path.join(__dirname, '..', 'python');
-        const venvPython = path.join(pythonDir, 'venv', 'bin', 'python');
+        const venvPython = getVenvPython(pythonDir);
         const script = path.join(pythonDir, 'auto_voice_trainer.py');
 
         return new Promise((resolve) => {
@@ -1464,7 +1488,7 @@ ipcMain.handle('tts:auto-process', async (event, audioPath) => {
 ipcMain.handle('tts:build-dataset', async () => {
     try {
         const pythonDir = path.join(__dirname, '..', 'python');
-        const venvPython = path.join(pythonDir, 'venv', 'bin', 'python');
+        const venvPython = getVenvPython(pythonDir);
         const script = path.join(pythonDir, 'build_voice_dataset.py');
 
         return new Promise((resolve) => {
@@ -1483,7 +1507,7 @@ ipcMain.handle('tts:build-dataset', async () => {
 ipcMain.handle('tts:finetune', async (event, { epochs = 50 } = {}) => {
     try {
         const pythonDir = path.join(__dirname, '..', 'python');
-        const venvPython = path.join(pythonDir, 'venv', 'bin', 'python');
+        const venvPython = getVenvPython(pythonDir);
         const script = path.join(pythonDir, 'build_voice_dataset.py');
 
         return new Promise((resolve) => {
@@ -1509,7 +1533,7 @@ ipcMain.handle('edge-tts:generate', async (event, { text, voice, rate }) => {
     try {
         const outputFile = path.join(EDGE_TTS_OUTPUT, `edge_${Date.now()}.mp3`);
         const pythonDir = path.join(__dirname, '..', 'python');
-        const venvPython = path.join(pythonDir, 'venv', 'bin', 'python');
+        const venvPython = getVenvPython(pythonDir);
         const voiceArg = voice || 'vi-VN-HoaiMyNeural';
         const rateArg = rate || '+0%';
 
@@ -1752,6 +1776,7 @@ ipcMain.handle('profile:analyze-audio', async (_, audioPath) => {
         return { success: false, error: error.message };
     }
 });
+
 
 // Cleanup old TTS files periodically
 setInterval(() => {
