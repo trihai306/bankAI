@@ -11,6 +11,12 @@ import os from "os";
 // Sentence delimiters — when LLM output hits one of these, flush to TTS
 const SENTENCE_DELIMITERS = /[.!?;。！？\n]/;
 
+// Strip <think>...</think> blocks from Qwen3 responses
+function stripThinking(text) {
+  if (!text) return '';
+  return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+}
+
 export class VoiceConversationEngine {
   constructor({ nodewhisper, workerPrompt, workerPromptStream, initQwenModel, runPython, ttsServer, dbAPI }) {
     this.nodewhisper = nodewhisper;
@@ -158,7 +164,8 @@ export class VoiceConversationEngine {
         ? `${this.systemPrompt}\n\nLịch sử hội thoại:\n${contextMessages}\n\nNgười dùng: ${userText}\n\nAI:`
         : `${this.systemPrompt}\n\nNgười dùng: ${userText}\n\nAI:`;
 
-      const responseText = await this.workerPrompt(fullPrompt, 0.5, 0.9);
+      const rawResponse = await this.workerPrompt(fullPrompt, 0.5, 0.9);
+      const responseText = stripThinking(rawResponse);
       timings.llm = performance.now() - stepStart;
       console.log(`[VoiceEngine] ⏱ Step 3 (LLM): ${(timings.llm / 1000).toFixed(2)}s`);
       console.log("[VoiceEngine] LLM Response:", responseText);
@@ -364,9 +371,24 @@ export class VoiceConversationEngine {
         }
       };
 
+      let insideThinkBlock = false;
+      let rawResponseText = "";
       const responseText = await this.workerPromptStream(
         fullPrompt,
         (token) => {
+          rawResponseText += token;
+          // Filter out <think>...</think> blocks in streaming
+          if (token.includes("<think>")) insideThinkBlock = true;
+          if (insideThinkBlock) {
+            if (rawResponseText.includes("</think>")) {
+              insideThinkBlock = false;
+              // Extract text after </think>
+              const afterThink = rawResponseText.split("</think>").pop();
+              fullResponseText = afterThink;
+              sentenceBuffer = afterThink;
+            }
+            return;
+          }
           fullResponseText += token;
           sentenceBuffer += token;
 
@@ -387,12 +409,13 @@ export class VoiceConversationEngine {
       }
       sentenceBuffer = "";
 
+      const cleanResponse = stripThinking(fullResponseText);
       timings.llm = performance.now() - stepStart;
       console.log(`[VoiceEngine:Text] ⏱ LLM: ${(timings.llm / 1000).toFixed(2)}s (${chunkIndex} chunks)`);
 
       this.conversationHistory.push(
         { role: "user", content: trimmedText },
-        { role: "assistant", content: responseText },
+        { role: "assistant", content: cleanResponse },
       );
 
       const ttsStart = performance.now();
@@ -589,10 +612,24 @@ export class VoiceConversationEngine {
         }
       };
 
-      // Stream tokens from LLM
+      // Stream tokens from LLM (filter out <think> blocks)
+      let insideThinkBlock = false;
+      let rawResponseText = "";
       const responseText = await this.workerPromptStream(
         fullPrompt,
         (token) => {
+          rawResponseText += token;
+          // Filter out <think>...</think> blocks in streaming
+          if (token.includes("<think>")) insideThinkBlock = true;
+          if (insideThinkBlock) {
+            if (rawResponseText.includes("</think>")) {
+              insideThinkBlock = false;
+              const afterThink = rawResponseText.split("</think>").pop();
+              fullResponseText = afterThink;
+              sentenceBuffer = afterThink;
+            }
+            return;
+          }
           fullResponseText += token;
           sentenceBuffer += token;
 
@@ -615,13 +652,14 @@ export class VoiceConversationEngine {
       }
       sentenceBuffer = "";
 
+      const cleanResponse = stripThinking(fullResponseText);
       timings.llm = performance.now() - stepStart;
       console.log(`[VoiceEngine:Stream] ⏱ LLM: ${(timings.llm / 1000).toFixed(2)}s (${chunkIndex} chunks)`);
 
       // Save to history
       this.conversationHistory.push(
         { role: "user", content: userText },
-        { role: "assistant", content: responseText },
+        { role: "assistant", content: cleanResponse },
       );
 
       // Wait for all TTS tasks to complete

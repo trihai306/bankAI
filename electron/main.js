@@ -891,6 +891,12 @@ ipcMain.handle('tts:transcribe-audio', async (event, audioPath) => {
     }
 });
 
+// Strip <think>...</think> blocks from Qwen3 responses
+function stripThinking(text) {
+    if (!text) return '';
+    return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+}
+
 // Qwen3 - Local AI text processing via Ollama
 ipcMain.handle('qwen:process-text', async (event, text, task = 'correct') => {
     console.log('=== QWEN PROCESS TEXT CALLED ===');
@@ -899,9 +905,9 @@ ipcMain.handle('qwen:process-text', async (event, text, task = 'correct') => {
 
     try {
         const prompts = {
-            correct: `Bạn là trợ lý AI chuyên sửa lỗi chính tả và ngữ pháp tiếng Việt. Hãy sửa văn bản sau thành chính tả đúng, ngữ pháp chuẩn, giữ nguyên ý nghĩa. Chỉ trả về văn bản đã sửa, không giải thích:\n\n${text}`,
-            extract: `Hãy phân tích văn bản sau và trích xuất thông tin quan trọng dưới dạng JSON (intent, entities, sentiment):\n\n${text}`,
-            answer: `Dựa vào văn bản sau, hãy trả lời câu hỏi một cách ngắn gọn:\n\n${text}`,
+            correct: `Bạn là trợ lý AI chuyên sửa lỗi chính tả và ngữ pháp tiếng Việt. Hãy sửa văn bản sau thành chính tả đúng, ngữ pháp chuẩn, giữ nguyên ý nghĩa. Chỉ trả về văn bản đã sửa, không giải thích. LUÔN trả lời bằng tiếng Việt. /no_think\n\n${text}`,
+            extract: `Hãy phân tích văn bản sau và trích xuất thông tin quan trọng dưới dạng JSON (intent, entities, sentiment). LUÔN trả lời bằng tiếng Việt. /no_think\n\n${text}`,
+            answer: `Dựa vào văn bản sau, hãy trả lời câu hỏi một cách ngắn gọn. LUÔN trả lời bằng tiếng Việt. /no_think\n\n${text}`,
             custom: text
         };
 
@@ -926,11 +932,12 @@ ipcMain.handle('qwen:process-text', async (event, text, task = 'correct') => {
         }
 
         const data = await response.json();
-        console.log('Qwen response:', data.response);
+        const cleanResponse = stripThinking(data.response);
+        console.log('Qwen response:', cleanResponse);
 
         return {
             success: true,
-            text: data.response.trim(),
+            text: cleanResponse,
             model: 'qwen3:4b',
             task: task
         };
@@ -1378,7 +1385,7 @@ ipcMain.handle('training:test-model', async (event, text) => {
 
         const systemPrompt = model === 'aibank-qwen'
             ? '' // aibank-qwen đã có system prompt với toàn bộ knowledge
-            : `Ban la tro ly ngan hang AI chuyen nghiep. Hay dua tren kien thuc duoc cung cap de tra loi khach hang mot cach tu nhien, than thien, de hieu. KHONG copy nguyen van - hay dien dat lai bang loi cua ban. Tra loi bang tieng Viet.`;
+            : `Ban la tro ly ngan hang AI chuyen nghiep. Hay dua tren kien thuc duoc cung cap de tra loi khach hang mot cach tu nhien, than thien, de hieu. KHONG copy nguyen van - hay dien dat lai bang loi cua ban. LUON tra loi bang tieng Viet, TUYET DOI KHONG tra loi bang tieng Anh. /no_think`;
 
         const prompt = `${systemPrompt}${contextBlock}\nKhach hang hoi: ${text}`;
 
@@ -1403,7 +1410,7 @@ ipcMain.handle('training:test-model', async (event, text) => {
         }
 
         const data = await response.json();
-        const answer = data.response.trim();
+        const answer = stripThinking(data.response);
 
         const totalMs = Date.now() - t0;
         return {
@@ -1580,7 +1587,7 @@ ipcMain.handle('qwen:stream-chat', async (event, { prompt, context }) => {
         if (relevant.length > 0) {
             ragContext = '\n\nKIEN THUC TU DATASET:\n' + relevant.map(r => r.q ? `Q: ${r.q}\nA: ${r.a}` : `- ${r.a}`).join('\n\n') + '\n\nDua tren kien thuc tren, ';
         }
-        const systemPrompt = `Bạn là trợ lý ngân hàng AI. Trả lời ngắn gọn 1-3 câu bằng tiếng Việt, tự nhiên thân thiện như đang nói chuyện với khách hàng. Dùng kiến thức được cung cấp để trả lời chính xác.${ragContext}`;
+        const systemPrompt = `Bạn là trợ lý ngân hàng AI. Trả lời ngắn gọn 1-3 câu bằng tiếng Việt, tự nhiên thân thiện như đang nói chuyện với khách hàng. Dùng kiến thức được cung cấp để trả lời chính xác. LUÔN trả lời bằng tiếng Việt, TUYỆT ĐỐI KHÔNG trả lời bằng tiếng Anh. /no_think${ragContext}`;
         const messages = [];
         if (context) {
             context.forEach(m => {
@@ -1602,7 +1609,7 @@ ipcMain.handle('qwen:stream-chat', async (event, { prompt, context }) => {
 
         if (!response.ok) throw new Error(`Ollama error: ${response.status}`);
         const data = await response.json();
-        const fullText = data.message?.content?.trim() || '';
+        const fullText = stripThinking(data.message?.content || '');
 
         // Split into sentences for progressive TTS
         const sentences = fullText
