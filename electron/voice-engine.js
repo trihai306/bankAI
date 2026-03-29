@@ -30,7 +30,7 @@ export class VoiceConversationEngine {
     this.isActive = false;
     this.voiceConfig = null; // { refAudio, refText, voiceId }
     this.baseSystemPrompt =
-      "Bạn là trợ lý AI ngân hàng thông minh. Trả lời ngắn gọn, rõ ràng bằng tiếng Việt. Chỉ trả lời nội dung, không giải thích thêm. /no_think";
+      "Bạn là trợ lý AI ngân hàng thông minh. Trả lời ngắn gọn, rõ ràng bằng tiếng Việt. Chỉ trả lời nội dung, không giải thích thêm.";
     this.systemPrompt = this.baseSystemPrompt;
     this.conversationHistory = [];
   }

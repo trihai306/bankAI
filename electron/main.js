@@ -905,9 +905,9 @@ ipcMain.handle('qwen:process-text', async (event, text, task = 'correct') => {
 
     try {
         const prompts = {
-            correct: `Bạn là trợ lý AI chuyên sửa lỗi chính tả và ngữ pháp tiếng Việt. Hãy sửa văn bản sau thành chính tả đúng, ngữ pháp chuẩn, giữ nguyên ý nghĩa. Chỉ trả về văn bản đã sửa, không giải thích. LUÔN trả lời bằng tiếng Việt. /no_think\n\n${text}`,
-            extract: `Hãy phân tích văn bản sau và trích xuất thông tin quan trọng dưới dạng JSON (intent, entities, sentiment). LUÔN trả lời bằng tiếng Việt. /no_think\n\n${text}`,
-            answer: `Dựa vào văn bản sau, hãy trả lời câu hỏi một cách ngắn gọn. LUÔN trả lời bằng tiếng Việt. /no_think\n\n${text}`,
+            correct: `Bạn là trợ lý AI chuyên sửa lỗi chính tả và ngữ pháp tiếng Việt. Hãy sửa văn bản sau thành chính tả đúng, ngữ pháp chuẩn, giữ nguyên ý nghĩa. Chỉ trả về văn bản đã sửa, không giải thích. LUÔN trả lời bằng tiếng Việt.\n\n${text}`,
+            extract: `Hãy phân tích văn bản sau và trích xuất thông tin quan trọng dưới dạng JSON (intent, entities, sentiment). LUÔN trả lời bằng tiếng Việt.\n\n${text}`,
+            answer: `Dựa vào văn bản sau, hãy trả lời câu hỏi một cách ngắn gọn. LUÔN trả lời bằng tiếng Việt.\n\n${text}`,
             custom: text
         };
 
@@ -920,6 +920,7 @@ ipcMain.handle('qwen:process-text', async (event, text, task = 'correct') => {
                 model: 'qwen3:4b',
                 prompt: prompt,
                 stream: false,
+                think: false,
                 options: {
                     temperature: 0.3,
                     top_p: 0.9
@@ -1385,7 +1386,7 @@ ipcMain.handle('training:test-model', async (event, text) => {
 
         const systemPrompt = model === 'aibank-qwen'
             ? '' // aibank-qwen đã có system prompt với toàn bộ knowledge
-            : `Ban la tro ly ngan hang AI chuyen nghiep. Hay dua tren kien thuc duoc cung cap de tra loi khach hang mot cach tu nhien, than thien, de hieu. KHONG copy nguyen van - hay dien dat lai bang loi cua ban. LUON tra loi bang tieng Viet, TUYET DOI KHONG tra loi bang tieng Anh. /no_think`;
+            : `Ban la tro ly ngan hang AI chuyen nghiep. Hay dua tren kien thuc duoc cung cap de tra loi khach hang mot cach tu nhien, than thien, de hieu. KHONG copy nguyen van - hay dien dat lai bang loi cua ban. LUON tra loi bang tieng Viet, TUYET DOI KHONG tra loi bang tieng Anh.`;
 
         const prompt = `${systemPrompt}${contextBlock}\nKhach hang hoi: ${text}`;
 
@@ -1397,6 +1398,7 @@ ipcMain.handle('training:test-model', async (event, text) => {
                 model,
                 prompt,
                 stream: false,
+                think: false,
                 options: {
                     temperature: 0.15,
                     top_p: 0.8,
@@ -1587,7 +1589,7 @@ ipcMain.handle('qwen:stream-chat', async (event, { prompt, context }) => {
         if (relevant.length > 0) {
             ragContext = '\n\nKIEN THUC TU DATASET:\n' + relevant.map(r => r.q ? `Q: ${r.q}\nA: ${r.a}` : `- ${r.a}`).join('\n\n') + '\n\nDua tren kien thuc tren, ';
         }
-        const systemPrompt = `Bạn là trợ lý ngân hàng AI. Trả lời ngắn gọn 1-3 câu bằng tiếng Việt, tự nhiên thân thiện như đang nói chuyện với khách hàng. Dùng kiến thức được cung cấp để trả lời chính xác. LUÔN trả lời bằng tiếng Việt, TUYỆT ĐỐI KHÔNG trả lời bằng tiếng Anh. /no_think${ragContext}`;
+        const systemPrompt = `Bạn là trợ lý ngân hàng AI. Trả lời ngắn gọn 1-3 câu bằng tiếng Việt, tự nhiên thân thiện như đang nói chuyện với khách hàng. Dùng kiến thức được cung cấp để trả lời chính xác. LUÔN trả lời bằng tiếng Việt, TUYỆT ĐỐI KHÔNG trả lời bằng tiếng Anh.${ragContext}`;
         const messages = [];
         if (context) {
             context.forEach(m => {
@@ -1603,6 +1605,7 @@ ipcMain.handle('qwen:stream-chat', async (event, { prompt, context }) => {
                 model: 'qwen3:4b',
                 messages: [{ role: 'system', content: systemPrompt }, ...messages],
                 stream: false,
+                think: false,
                 options: { temperature: 0.3, top_p: 0.9, num_predict: 150 }
             })
         });
