@@ -102,6 +102,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         generate: (config) => ipcRenderer.invoke('tts:generate', config),
         generateStream: (config) => ipcRenderer.invoke('tts:generate-stream', config),
         getTrainingScript: () => ipcRenderer.invoke('tts:get-training-script'),
+        pickVoiceFile: (voiceName) => ipcRenderer.invoke('tts:pick-voice-file', voiceName),
         autoProcess: (audioPath) => ipcRenderer.invoke('tts:auto-process', audioPath),
         buildDataset: () => ipcRenderer.invoke('tts:build-dataset'),
         finetune: (config) => ipcRenderer.invoke('tts:finetune', config),
@@ -109,6 +110,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // Qwen3 - Local AI
     qwen: {
+        getStatus: () => ipcRenderer.invoke('qwen:get-status'),
         processText: (text, task) => ipcRenderer.invoke('qwen:process-text', text, task),
         streamChat: (prompt, context) => ipcRenderer.invoke('qwen:stream-chat', { prompt, context }),
     },
@@ -123,6 +125,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
         setActive: (id) => ipcRenderer.invoke('profile:set-active', id),
         getActive: () => ipcRenderer.invoke('profile:get-active'),
         analyzeAudio: (path) => ipcRenderer.invoke('profile:analyze-audio', path),
+    },
+
+    // Voices (VoiceCreate page - maps to voices:* IPC handlers)
+    voices: {
+        list: () => ipcRenderer.invoke('voices:list'),
+        create: (data) => ipcRenderer.invoke('voices:create', data),
+        update: (id, data) => ipcRenderer.invoke('voices:update', id, data),
+        delete: (id) => ipcRenderer.invoke('voices:delete', id),
+        testGenerate: (id, text) => ipcRenderer.invoke('voices:test-generate', id, text),
     },
 
     // Edge-TTS - Fast TTS for calls (<1s)

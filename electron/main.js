@@ -887,9 +887,14 @@ ipcMain.handle('tts:transcribe-audio', async (event, audioPath) => {
         return result;
     } catch (error) {
         console.error('Transcription error:', error);
-        const msg = error.name === 'AbortError'
-            ? 'Transcription timeout - file audio co the qua dai, thu file ngan hon'
-            : (error.message || 'Loi transcribe - thu lai');
+        let msg;
+        if (error.name === 'AbortError') {
+            msg = 'Transcription timeout - file audio có thể quá dài, thử file ngắn hơn';
+        } else if (error.cause?.code === 'ECONNREFUSED' || error.message?.includes('fetch failed')) {
+            msg = 'TTS server chưa chạy - vào Settings khởi động TTS server trước';
+        } else {
+            msg = error.message || 'Lỗi transcribe - thử lại';
+        }
         return { success: false, error: msg };
     }
 });
@@ -953,6 +958,20 @@ async function ensureNoThinkModel() {
         console.warn('[Ollama] Failed to create nothink model:', err.message);
     }
 }
+
+// Qwen3 status check - verify Ollama is running and model available
+ipcMain.handle('qwen:get-status', async () => {
+    try {
+        const resp = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(3000) });
+        if (!resp.ok) return { status: 'offline' };
+        const data = await resp.json();
+        const models = (data.models || []).map(m => m.name);
+        const hasQwen = models.some(m => m.includes('qwen'));
+        return { status: hasQwen ? 'ready' : 'no_model', models };
+    } catch {
+        return { status: 'offline' };
+    }
+});
 
 // Qwen3 - Local AI text processing via Ollama
 ipcMain.handle('qwen:process-text', async (event, text, task = 'correct') => {
@@ -1843,6 +1862,271 @@ ipcMain.handle('profile:analyze-audio', async (_, audioPath) => {
     }
 });
 
+
+// ===========================================
+// Voices API (for VoiceCreate page)
+// Wraps profile:* handlers with proper voice data handling
+// ===========================================
+
+ipcMain.handle('voices:list', async () => {
+    try {
+        // Sync from TTS server
+        try {
+            const resp = await fetch(`${TTS_SERVER_URL}/profiles`);
+            if (resp.ok) {
+                const data = await resp.json();
+                const serverProfiles = data.profiles || [];
+                const dbProfiles = dbAPI.getProfiles();
+                const dbNames = new Set(dbProfiles.map(p => p.name));
+                for (const sp of serverProfiles) {
+                    if (!dbNames.has(sp.name)) {
+                        dbAPI.createProfile({
+                            name: sp.name,
+                            ref_audio_path: sp.ref_file || null,
+                            transcript: sp.ref_text || null,
+                            quality_score: 0,
+                            samples_count: 0,
+                            total_duration: sp.duration_s || 0,
+                            is_trained: 1,
+                            model_path: null,
+                        });
+                    }
+                }
+            }
+        } catch { /* TTS server not ready */ }
+
+        return dbAPI.getProfiles().map(p => ({
+            id: p.id,
+            name: p.name,
+            audio_path: p.ref_audio_path,
+            transcript: p.transcript,
+            quality_score: p.quality_score,
+            created_at: p.created_at,
+            is_active: p.is_active,
+        }));
+    } catch (error) {
+        console.error('[Voices] List error:', error);
+        return [];
+    }
+});
+
+ipcMain.handle('voices:create', async (_, data) => {
+    try {
+        let refAudioPath = data.filePath;
+
+        // If audioData provided (recorded audio), save it first
+        if (data.audioData && data.filename) {
+            const safeName = path.basename(data.filename);
+            refAudioPath = path.join(REF_AUDIO_DIR, safeName);
+            fs.writeFileSync(refAudioPath, Buffer.from(data.audioData));
+
+            // Convert WebM to WAV if needed
+            if (safeName.endsWith('.webm')) {
+                try {
+                    const wavPath = refAudioPath.replace('.webm', '.wav');
+                    execSync(`ffmpeg -y -i "${refAudioPath}" -ar 44100 -ac 1 "${wavPath}"`, { timeout: 30000 });
+                    fs.unlinkSync(refAudioPath);
+                    refAudioPath = wavPath;
+                } catch (e) {
+                    console.warn('[Voices] WebM->WAV conversion failed:', e.message);
+                }
+            }
+        }
+
+        if (!refAudioPath) {
+            return { success: false, error: 'No audio file provided' };
+        }
+
+        const result = dbAPI.createProfile({
+            name: data.name,
+            ref_audio_path: refAudioPath,
+            transcript: data.transcript || '',
+            quality_score: 0,
+            samples_count: 1,
+            total_duration: 0,
+            is_trained: 0,
+            model_path: null,
+        });
+
+        // Build profile on TTS server
+        try {
+            await fetch(`${TTS_SERVER_URL}/build-profile`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: data.name,
+                    ref_audio: refAudioPath,
+                    ref_text: data.transcript || '',
+                }),
+            });
+            console.log(`[Voices] Built TTS profile '${data.name}'`);
+        } catch (e) {
+            console.warn(`[Voices] TTS build failed: ${e.message}`);
+        }
+
+        return { success: true, id: result.id };
+    } catch (error) {
+        console.error('[Voices] Create error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('voices:update', async (_, id, data) => {
+    try {
+        let refAudioPath = data.filePath;
+
+        // If audioData provided (re-recorded audio), save it
+        if (data.audioData && data.filename) {
+            const safeName = path.basename(data.filename);
+            refAudioPath = path.join(REF_AUDIO_DIR, safeName);
+            fs.writeFileSync(refAudioPath, Buffer.from(data.audioData));
+
+            if (safeName.endsWith('.webm')) {
+                try {
+                    const wavPath = refAudioPath.replace('.webm', '.wav');
+                    execSync(`ffmpeg -y -i "${refAudioPath}" -ar 44100 -ac 1 "${wavPath}"`, { timeout: 30000 });
+                    fs.unlinkSync(refAudioPath);
+                    refAudioPath = wavPath;
+                } catch (e) {
+                    console.warn('[Voices] WebM->WAV conversion failed:', e.message);
+                }
+            }
+        }
+
+        const updateData = { name: data.name, transcript: data.transcript };
+        if (refAudioPath) updateData.ref_audio_path = refAudioPath;
+
+        dbAPI.updateProfile(id, updateData);
+
+        // Rebuild profile on TTS server if audio changed
+        if (refAudioPath) {
+            try {
+                await fetch(`${TTS_SERVER_URL}/build-profile`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: data.name,
+                        ref_audio: refAudioPath,
+                        ref_text: data.transcript || '',
+                    }),
+                });
+            } catch (e) {
+                console.warn(`[Voices] TTS rebuild failed: ${e.message}`);
+            }
+        }
+
+        return { success: true };
+    } catch (error) {
+        console.error('[Voices] Update error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('voices:delete', async (_, id) => {
+    try {
+        const profile = dbAPI.getProfile(id);
+        dbAPI.deleteProfile(id);
+
+        // Delete ref audio file if exists
+        if (profile?.ref_audio_path && fs.existsSync(profile.ref_audio_path)) {
+            try { fs.unlinkSync(profile.ref_audio_path); } catch { }
+        }
+
+        return { success: true };
+    } catch (error) {
+        console.error('[Voices] Delete error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('voices:test-generate', async (_, id, text) => {
+    try {
+        const profile = dbAPI.getProfile(id);
+        if (!profile) return { success: false, error: 'Voice profile not found' };
+        if (!profile.ref_audio_path) return { success: false, error: 'No reference audio for this voice' };
+
+        const result = await ttsServerFetch('/generate', {
+            method: 'POST',
+            body: JSON.stringify({
+                ref_audio: profile.ref_audio_path,
+                ref_text: profile.transcript || '',
+                gen_text: text,
+                speed: 1.0,
+                nfe_step: 16,
+            }),
+        });
+
+        if (result.success) {
+            return { success: true, audioPath: result.output };
+        }
+        return { success: false, error: result.error || 'TTS generation failed' };
+    } catch (error) {
+        console.error('[Voices] Test generate error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Pick voice file from disk (file dialog + validation)
+ipcMain.handle('tts:pick-voice-file', async (_, voiceName) => {
+    try {
+        const result = await dialog.showOpenDialog({
+            title: 'Chọn file giọng nói',
+            filters: [
+                { name: 'Audio Files', extensions: ['wav', 'mp3', 'flac', 'ogg', 'm4a'] },
+            ],
+            properties: ['openFile'],
+        });
+
+        if (result.canceled || !result.filePaths.length) {
+            return { canceled: true };
+        }
+
+        const srcPath = result.filePaths[0];
+        const originalName = path.basename(srcPath);
+
+        // Check duration with ffprobe
+        let duration = 0;
+        try {
+            const output = execSync(
+                `ffprobe -v quiet -print_format json -show_format "${srcPath}"`,
+                { timeout: 10000 }
+            ).toString();
+            const parsed = JSON.parse(output);
+            duration = parseFloat(parsed.format?.duration || '0');
+        } catch { }
+
+        if (duration > 0 && (duration < 5 || duration > 30)) {
+            return { error: 'duration_invalid', duration: Math.round(duration * 10) / 10, min: 5, max: 30 };
+        }
+
+        // Copy to ref_audio dir
+        const safeName = `voice_${Date.now()}_${originalName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+        let destPath = path.join(REF_AUDIO_DIR, safeName);
+        fs.copyFileSync(srcPath, destPath);
+
+        // Convert to WAV if not already
+        if (!safeName.toLowerCase().endsWith('.wav')) {
+            try {
+                const wavPath = destPath.replace(/\.[^.]+$/, '.wav');
+                execSync(`ffmpeg -y -i "${destPath}" -ar 44100 -ac 1 "${wavPath}"`, { timeout: 30000 });
+                fs.unlinkSync(destPath);
+                destPath = wavPath;
+            } catch (e) {
+                console.warn('[TTS] Audio conversion failed:', e.message);
+            }
+        }
+
+        return {
+            success: true,
+            path: destPath,
+            filename: path.basename(destPath),
+            originalName,
+        };
+    } catch (error) {
+        console.error('[TTS] Pick voice file error:', error);
+        return { success: false, error: error.message };
+    }
+});
 
 // ===========================================
 // Voice Chat - Streaming Pipeline (STT → LLM → TTS)

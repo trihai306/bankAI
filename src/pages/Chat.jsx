@@ -18,13 +18,12 @@ export default function Chat() {
 
     const checkModelStatus = async () => {
         try {
-            if (window.electronAPI?.qwen) {
+            if (window.electronAPI?.qwen?.getStatus) {
                 const result = await window.electronAPI.qwen.getStatus()
-                setModelStatus(result.status === 'ready' ? 'ready' : 
-                               result.status === 'loading' ? 'checking' : 
-                               result.status === 'not_loaded' ? 'ready' : 'offline')
+                setModelStatus(result.status === 'ready' ? 'ready' :
+                               result.status === 'no_model' ? 'offline' : 'offline')
             } else {
-                // Fallback: try sending a test to see if model loads
+                // Fallback: try a quick test
                 setModelStatus('ready')
             }
         } catch {
