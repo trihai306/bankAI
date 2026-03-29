@@ -206,6 +206,9 @@ app.whenReady().then(() => {
     // Start TTS server in background (model loads once, stays in memory)
     startTTSServer();
 
+    // Create qwen3-nothink model variant (disables thinking output)
+    ensureNoThinkModel();
+
     createWindow();
 
     app.on('activate', () => {
@@ -891,10 +894,64 @@ ipcMain.handle('tts:transcribe-audio', async (event, audioPath) => {
     }
 });
 
-// Strip <think>...</think> blocks from Qwen3 responses
+// Strip thinking from Qwen3 responses (both <think> tags and plain-text thinking)
 function stripThinking(text) {
     if (!text) return '';
-    return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    // 1. Strip <think>...</think> blocks
+    let clean = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    // 2. If response still starts with English reasoning, extract Vietnamese answer
+    if (/^(Okay|Let me|Wait|Hmm|So,|The user|I need|I should|As a|First|Now|Alright)/i.test(clean)) {
+        // Try to find quoted Vietnamese text (the actual answer)
+        const quotes = clean.match(/[""\u201C]([^""\u201D]*[\u00C0-\u1EF9][^""\u201D]*)[""\u201D]/g);
+        if (quotes && quotes.length > 0) {
+            // Get the longest quoted Vietnamese text (most likely the full answer)
+            const best = quotes
+                .map(q => q.replace(/^[""\u201C]|[""\u201D]$/g, ''))
+                .sort((a, b) => b.length - a.length)[0];
+            if (best && best.length > 5) return best.trim();
+        }
+        // Fallback: extract lines containing Vietnamese diacritics
+        const viLines = clean.split(/\n/).filter(l =>
+            /[\u00C0-\u00FF\u0100-\u024F\u1E00-\u1EFF]/.test(l) &&
+            !/^(Okay|Let me|Wait|Hmm|So,|The user|I need|I should|As a|First|Now|That|But |Maybe|Alright|In Vietnamese)/i.test(l.trim())
+        );
+        if (viLines.length > 0) return viLines.join(' ').trim();
+    }
+    return clean;
+}
+
+// Ensure qwen3:4b-nothink model exists (disables thinking via stop token)
+async function ensureNoThinkModel() {
+    try {
+        // Check if nothink model already exists
+        const listResp = await fetch('http://localhost:11434/api/tags');
+        if (listResp.ok) {
+            const data = await listResp.json();
+            const models = (data.models || []).map(m => m.name);
+            if (models.some(m => m.includes('qwen3-nothink'))) {
+                console.log('[Ollama] qwen3-nothink model already exists');
+                return;
+            }
+        }
+        // Create nothink variant with Modelfile
+        console.log('[Ollama] Creating qwen3-nothink model...');
+        const resp = await fetch('http://localhost:11434/api/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: 'qwen3-nothink',
+                modelfile: `FROM qwen3:4b\nPARAMETER stop <think>\nSYSTEM "Bạn là trợ lý ngân hàng AI. Trả lời trực tiếp bằng tiếng Việt, ngắn gọn 1-3 câu. KHÔNG được suy nghĩ, KHÔNG giải thích quá trình, chỉ trả lời nội dung."`
+            })
+        });
+        if (resp.ok) {
+            // Consume stream to completion
+            const reader = resp.body?.getReader?.();
+            if (reader) { while (!(await reader.read()).done); }
+            console.log('[Ollama] qwen3-nothink model created successfully');
+        }
+    } catch (err) {
+        console.warn('[Ollama] Failed to create nothink model:', err.message);
+    }
 }
 
 // Qwen3 - Local AI text processing via Ollama
@@ -917,10 +974,9 @@ ipcMain.handle('qwen:process-text', async (event, text, task = 'correct') => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                model: 'qwen3:4b',
+                model: 'qwen3-nothink',
                 prompt: prompt,
                 stream: false,
-                think: false,
                 options: {
                     temperature: 0.3,
                     top_p: 0.9
@@ -939,7 +995,7 @@ ipcMain.handle('qwen:process-text', async (event, text, task = 'correct') => {
         return {
             success: true,
             text: cleanResponse,
-            model: 'qwen3:4b',
+            model: 'qwen3-nothink',
             task: task
         };
     } catch (error) {
@@ -1369,8 +1425,8 @@ ipcMain.handle('training:test-model', async (event, text) => {
             contextBlock = `\n\nKIEN THUC TU TRAINING DATA (${relevant.length} ket qua):\n\n${contextItems}\n\n---\nDua tren kien thuc tren, `;
         }
 
-        // 4. Chọn model: ưu tiên aibank-qwen (đã bake dataset), fallback qwen3:4b
-        let model = 'qwen3:4b';
+        // 4. Chọn model: ưu tiên aibank-qwen (đã bake dataset), fallback qwen3-nothink
+        let model = 'qwen3-nothink';
         try {
             const listResp = await fetch('http://localhost:11434/api/tags');
             if (listResp.ok) {
@@ -1602,10 +1658,9 @@ ipcMain.handle('qwen:stream-chat', async (event, { prompt, context }) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                model: 'qwen3:4b',
+                model: 'qwen3-nothink',
                 messages: [{ role: 'system', content: systemPrompt }, ...messages],
                 stream: false,
-                think: false,
                 options: { temperature: 0.3, top_p: 0.9, num_predict: 150 }
             })
         });
@@ -1814,9 +1869,9 @@ async function ollamaPrompt(prompt, temperature = 0.5, topP = 0.9) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            model: 'qwen3:4b',
+            model: 'qwen3-nothink',
             messages: [
-                { role: 'system', content: '/no_think\nBạn là trợ lý ngân hàng AI. Trả lời ngắn gọn bằng tiếng Việt.' },
+                { role: 'system', content: 'Bạn là trợ lý ngân hàng AI. Trả lời ngắn gọn bằng tiếng Việt.' },
                 { role: 'user', content: prompt },
             ],
             stream: false,
@@ -1825,9 +1880,8 @@ async function ollamaPrompt(prompt, temperature = 0.5, topP = 0.9) {
     });
     if (!response.ok) throw new Error(`Ollama error: ${response.status}`);
     const data = await response.json();
-    // Qwen3: content may be empty if thinking mode is on, fallback to thinking field
-    const text = data.message?.content || data.message?.thinking || data.response || '';
-    return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    const text = data.message?.content || data.response || '';
+    return stripThinking(text);
 }
 
 // LLM streaming prompt via Ollama - simulated streaming for Qwen3 compatibility
@@ -1838,7 +1892,7 @@ async function ollamaPromptStream(prompt, onToken, temperature = 0.5, topP = 0.9
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            model: 'qwen3:4b',
+            model: 'qwen3-nothink',
             messages: [
                 { role: 'system', content: 'Bạn là trợ lý ngân hàng AI. Trả lời ngắn gọn 1-3 câu bằng tiếng Việt, tự nhiên thân thiện.' },
                 { role: 'user', content: prompt },
@@ -1850,10 +1904,8 @@ async function ollamaPromptStream(prompt, onToken, temperature = 0.5, topP = 0.9
     if (!response.ok) throw new Error(`Ollama error: ${response.status}`);
     const data = await response.json();
 
-    // Qwen3: get answer from content, fallback to thinking field
-    let fullText = data.message?.content || data.message?.thinking || data.response || '';
-    // Strip <think>...</think> tags if present
-    fullText = fullText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    let fullText = data.message?.content || data.response || '';
+    fullText = stripThinking(fullText);
 
     if (!fullText) {
         console.warn('[VoiceChat] LLM returned empty response');
