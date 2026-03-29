@@ -1,9 +1,10 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { spawn, execSync } from 'child_process';
 import { initDB, dbAPI } from './db.js';
+import { VoiceConversationEngine } from './voice-engine.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -174,7 +175,7 @@ function createWindow() {
 
     // Prevent navigation away from the app (e.g. accidental <a href> full reload)
     mainWindow.webContents.on('will-navigate', (event, url) => {
-        const appUrl = isDev ? 'http://localhost:5173' : `file://`;
+        const appUrl = isDev ? 'http://localhost:5174' : `file://`;
         if (!url.startsWith(appUrl)) {
             event.preventDefault();
             // If it's an external URL, open in browser
@@ -1777,6 +1778,233 @@ ipcMain.handle('profile:analyze-audio', async (_, audioPath) => {
     }
 });
 
+
+// ===========================================
+// Voice Chat - Streaming Pipeline (STT → LLM → TTS)
+// Uses VoiceConversationEngine from voice-engine.js
+// ===========================================
+
+// Whisper transcription via TTS server (model already loaded)
+async function whisperTranscribe(wavPath) {
+    try {
+        const result = await ttsServerFetch('/transcribe', {
+            method: 'POST',
+            body: JSON.stringify({ audio_path: wavPath }),
+        });
+        return result.text || result.transcript || '';
+    } catch (error) {
+        console.error('[VoiceChat] Whisper transcription failed:', error.message);
+        return '';
+    }
+}
+
+// LLM prompt (non-streaming) via Ollama - uses /api/chat for Qwen3 compatibility
+async function ollamaPrompt(prompt, temperature = 0.5, topP = 0.9) {
+    const response = await fetch('http://localhost:11434/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            model: 'qwen3:4b',
+            messages: [
+                { role: 'system', content: '/no_think\nBạn là trợ lý ngân hàng AI. Trả lời ngắn gọn bằng tiếng Việt.' },
+                { role: 'user', content: prompt },
+            ],
+            stream: false,
+            options: { temperature, top_p: topP, num_predict: 300 }
+        })
+    });
+    if (!response.ok) throw new Error(`Ollama error: ${response.status}`);
+    const data = await response.json();
+    // Qwen3: content may be empty if thinking mode is on, fallback to thinking field
+    const text = data.message?.content || data.message?.thinking || data.response || '';
+    return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+}
+
+// LLM streaming prompt via Ollama - simulated streaming for Qwen3 compatibility
+// Qwen3 thinking mode makes true streaming unreliable (content always empty),
+// so we get full response first then emit tokens progressively.
+async function ollamaPromptStream(prompt, onToken, temperature = 0.5, topP = 0.9) {
+    const response = await fetch('http://localhost:11434/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            model: 'qwen3:4b',
+            messages: [
+                { role: 'system', content: 'Bạn là trợ lý ngân hàng AI. Trả lời ngắn gọn 1-3 câu bằng tiếng Việt, tự nhiên thân thiện.' },
+                { role: 'user', content: prompt },
+            ],
+            stream: false,
+            options: { temperature, top_p: topP, num_predict: 300 }
+        })
+    });
+    if (!response.ok) throw new Error(`Ollama error: ${response.status}`);
+    const data = await response.json();
+
+    // Qwen3: get answer from content, fallback to thinking field
+    let fullText = data.message?.content || data.message?.thinking || data.response || '';
+    // Strip <think>...</think> tags if present
+    fullText = fullText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
+    if (!fullText) {
+        console.warn('[VoiceChat] LLM returned empty response');
+        return '';
+    }
+
+    // Simulate streaming: emit text word-by-word with small delay
+    const words = fullText.split(/(\s+)/);
+    for (const word of words) {
+        if (word) onToken(word);
+    }
+
+    return fullText;
+}
+
+// TTS server wrapper (generates WAV and returns buffer)
+const ttsServerWrap = {
+    async generateWav({ refAudio, refText, genText, speed }) {
+        try {
+            const result = await ttsServerFetch('/generate', {
+                method: 'POST',
+                body: JSON.stringify({
+                    ref_audio: refAudio || '',
+                    ref_text: refText || '',
+                    gen_text: genText,
+                    speed: speed || 1.0,
+                    nfe_step: 16,
+                }),
+            });
+
+            if (result.success && result.output) {
+                const audioBuffer = fs.readFileSync(result.output);
+                return {
+                    success: true,
+                    audioBuffer,
+                    timings: {
+                        preprocess: result.preprocess_time || '0',
+                        generate: result.generate_time || '0',
+                    }
+                };
+            }
+            return { success: false, error: result.error || 'TTS generation failed' };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+};
+
+// Create Voice Engine instance
+const voiceEngine = new VoiceConversationEngine({
+    nodewhisper: whisperTranscribe,
+    workerPrompt: ollamaPrompt,
+    workerPromptStream: ollamaPromptStream,
+    initQwenModel: async () => { /* Ollama manages models externally */ },
+    runPython: null,
+    ttsServer: ttsServerWrap,
+    dbAPI: {
+        ...dbAPI,
+        getVoice: (id) => { try { return dbAPI.getVoice?.(id) || null; } catch { return null; } },
+        getActiveTrainingData: () => { try { return dbAPI.getActiveTrainingData?.() || []; } catch { return []; } },
+    },
+});
+
+// Helper: send stream events from VoiceEngine to renderer via IPC
+function createVoiceChatEventSender() {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) return () => {};
+
+    return (evt) => {
+        try {
+            switch (evt.type) {
+                case 'stt-done':
+                    win.webContents.send('voice-chat:stt-done', { transcript: evt.transcript });
+                    break;
+                case 'llm-chunk':
+                    win.webContents.send('voice-chat:llm-chunk', { text: evt.text, fullText: evt.fullText });
+                    break;
+                case 'tts-audio':
+                    win.webContents.send('voice-chat:tts-audio', {
+                        audioData: evt.audioBuffer,
+                        mimeType: 'audio/wav',
+                        chunkIndex: evt.chunkIndex,
+                    });
+                    break;
+                case 'tts-chunk-failed':
+                    win.webContents.send('voice-chat:tts-chunk-failed', { chunkIndex: evt.chunkIndex });
+                    break;
+                case 'done':
+                    win.webContents.send('voice-chat:done', {
+                        chunkCount: evt.chunkCount,
+                        responseText: evt.responseText,
+                    });
+                    break;
+            }
+        } catch (err) {
+            console.error('[VoiceChat] Event send error:', err.message);
+        }
+    };
+}
+
+// Voice Chat IPC Handlers
+ipcMain.handle('voice-chat:start', async (_, config) => {
+    return voiceEngine.start(config || {});
+});
+
+ipcMain.handle('voice-chat:stop', async () => {
+    return voiceEngine.stop();
+});
+
+ipcMain.handle('voice-chat:process-stream', async (_, audioData, filename) => {
+    const onEvent = createVoiceChatEventSender();
+    return voiceEngine.processAudioChunkStream(audioData, filename, onEvent);
+});
+
+ipcMain.handle('voice-chat:process-text', async (_, text) => {
+    const onEvent = createVoiceChatEventSender();
+    return voiceEngine.processTextStream(text, onEvent);
+});
+
+ipcMain.handle('voice-chat:process-ref-file', async (_, filename) => {
+    const safeName = path.basename(filename);
+    const refPath = path.join(REF_AUDIO_DIR, safeName);
+    if (!fs.existsSync(refPath)) {
+        return { success: false, error: 'Reference audio file not found' };
+    }
+    const audioData = fs.readFileSync(refPath);
+    const onEvent = createVoiceChatEventSender();
+    return voiceEngine.processAudioChunkStream(Array.from(audioData), safeName, onEvent);
+});
+
+ipcMain.handle('voice-chat:pick-and-process', async () => {
+    const win = BrowserWindow.getAllWindows()[0];
+    const result = await dialog.showOpenDialog(win, {
+        title: 'Chọn file audio',
+        filters: [{ name: 'Audio Files', extensions: ['wav', 'mp3', 'webm', 'ogg', 'm4a', 'flac'] }],
+        properties: ['openFile'],
+    });
+    if (result.canceled || !result.filePaths[0]) {
+        return { success: false, error: 'cancelled' };
+    }
+    const filePath = result.filePaths[0];
+    const audioData = fs.readFileSync(filePath);
+    const filename = path.basename(filePath);
+    const onEvent = createVoiceChatEventSender();
+    return voiceEngine.processAudioChunkStream(Array.from(audioData), filename, onEvent);
+});
+
+ipcMain.handle('voice-chat:list-ref-audios', async () => {
+    try {
+        if (!fs.existsSync(REF_AUDIO_DIR)) return [];
+        return fs.readdirSync(REF_AUDIO_DIR)
+            .filter(f => /\.(wav|mp3|webm|ogg)$/i.test(f))
+            .filter(f => !f.startsWith('_'))
+            .map(f => ({
+                filename: f,
+                path: path.join(REF_AUDIO_DIR, f),
+            }));
+    } catch {
+        return [];
+    }
+});
 
 // Cleanup old TTS files periodically
 setInterval(() => {

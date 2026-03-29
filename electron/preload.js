@@ -23,6 +23,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
         onResponse: (callback) => ipcRenderer.on('voice:response', callback),
     },
 
+    // Voice Chat (streaming pipeline: STT → LLM → TTS)
+    voiceChat: {
+        start: (config) => ipcRenderer.invoke('voice-chat:start', config),
+        stop: () => ipcRenderer.invoke('voice-chat:stop'),
+        processStream: (audioData, filename) => ipcRenderer.invoke('voice-chat:process-stream', audioData, filename),
+        processRefFile: (filename) => ipcRenderer.invoke('voice-chat:process-ref-file', filename),
+        processText: (text) => ipcRenderer.invoke('voice-chat:process-text', text),
+        pickAndProcess: () => ipcRenderer.invoke('voice-chat:pick-and-process'),
+        listRefAudios: () => ipcRenderer.invoke('voice-chat:list-ref-audios'),
+        onStreamEvent: (handlers) => {
+            if (handlers.onSttDone) ipcRenderer.on('voice-chat:stt-done', (_, data) => handlers.onSttDone(data));
+            if (handlers.onLlmChunk) ipcRenderer.on('voice-chat:llm-chunk', (_, data) => handlers.onLlmChunk(data));
+            if (handlers.onTtsAudio) ipcRenderer.on('voice-chat:tts-audio', (_, data) => handlers.onTtsAudio(data));
+            if (handlers.onTtsChunkFailed) ipcRenderer.on('voice-chat:tts-chunk-failed', (_, data) => handlers.onTtsChunkFailed(data));
+            if (handlers.onDone) ipcRenderer.on('voice-chat:done', (_, data) => handlers.onDone(data));
+        },
+        removeStreamListeners: () => {
+            ipcRenderer.removeAllListeners('voice-chat:stt-done');
+            ipcRenderer.removeAllListeners('voice-chat:llm-chunk');
+            ipcRenderer.removeAllListeners('voice-chat:tts-audio');
+            ipcRenderer.removeAllListeners('voice-chat:tts-chunk-failed');
+            ipcRenderer.removeAllListeners('voice-chat:done');
+        },
+    },
+
     // Call
     call: {
         initiate: (phoneNumber) => ipcRenderer.invoke('call:initiate', phoneNumber),

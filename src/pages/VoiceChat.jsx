@@ -34,18 +34,21 @@ export default function VoiceChat() {
     const activeStreamRef = useRef(null)  // tracks current stream handler for abort
     const isProcessingRefAudio = useRef(false)
 
+    // Safe accessor — preload.js only available inside Electron, not plain browser
+    const vc = window.electronAPI?.voiceChat
+
     // Load voices on mount
     useEffect(() => {
-        loadRefAudios()
+        if (vc) loadRefAudios()
         return () => {
             stopListening()
-            window.electronAPI.voiceChat.removeStreamListeners()
+            vc?.removeStreamListeners()
         }
     }, [])
 
     const loadRefAudios = async () => {
         try {
-            const list = await window.electronAPI.voiceChat.listRefAudios()
+            const list = await vc?.listRefAudios()
             setRefAudios(list || [])
         } catch (err) {
             console.error('Failed to load ref audios:', err)
@@ -117,9 +120,9 @@ export default function VoiceChat() {
 
         const registerListeners = () => {
             // ALWAYS clean up old listeners before registering new ones
-            window.electronAPI.voiceChat.removeStreamListeners()
+            vc.removeStreamListeners()
 
-            window.electronAPI.voiceChat.onStreamEvent({
+            vc.onStreamEvent({
                 onSttDone: (data) => {
                     if (aborted) return
                     setMessages(prev => [
@@ -221,14 +224,14 @@ export default function VoiceChat() {
 
         try {
             if (!isListening) {
-                await window.electronAPI.voiceChat.start({
+                await vc.start({
                 })
             }
 
             setPipelineStep('stt')
             registerListeners()
 
-            const result = await window.electronAPI.voiceChat.processRefFile(filename)
+            const result = await vc.processRefFile(filename)
 
             await waitForPlayback()
 
@@ -243,13 +246,13 @@ export default function VoiceChat() {
         } finally {
             abort()
             activeStreamRef.current = null
-            window.electronAPI.voiceChat.removeStreamListeners()
+            vc.removeStreamListeners()
             isProcessingRef.current = false
             setIsProcessing(false)
             setPipelineStep(null)
 
             if (!isListening) {
-                try { await window.electronAPI.voiceChat.stop() } catch { }
+                try { await vc.stop() } catch { }
             }
         }
     }
@@ -267,7 +270,7 @@ export default function VoiceChat() {
         }
 
         try {
-            const audioData = await window.electronAPI.tts.readAudio(filepath)
+            const audioData = await window.electronAPI?.tts?.readAudio(filepath)
             if (!audioData) return
 
             const uint8 = new Uint8Array(audioData)
@@ -295,7 +298,7 @@ export default function VoiceChat() {
         setError(null)
         try {
             // Start voice engine session
-            await window.electronAPI.voiceChat.start({
+            await vc.start({
             })
 
             // Get mic stream
@@ -378,7 +381,7 @@ export default function VoiceChat() {
 
         // Stop voice engine session
         try {
-            await window.electronAPI.voiceChat.stop()
+            await vc.stop()
         } catch { }
     }
 
@@ -459,7 +462,7 @@ export default function VoiceChat() {
             registerListeners()
 
             // Start streaming pipeline (returns when entire pipeline finishes)
-            const result = await window.electronAPI.voiceChat.processStream(
+            const result = await vc.processStream(
                 Array.from(new Uint8Array(wavData)),
                 `voice_${Date.now()}.wav`
             )
@@ -478,7 +481,7 @@ export default function VoiceChat() {
             // Cleanup stream listeners
             abort()
             activeStreamRef.current = null
-            window.electronAPI.voiceChat.removeStreamListeners()
+            vc.removeStreamListeners()
             isProcessingRef.current = false
             setIsProcessing(false)
             setPipelineStep(null)
@@ -566,14 +569,14 @@ export default function VoiceChat() {
         try {
             // Start voice engine if not active
             if (!isListening) {
-                await window.electronAPI.voiceChat.start({
+                await vc.start({
                 })
             }
 
             setPipelineStep('stt')
             registerListeners()
 
-            const result = await window.electronAPI.voiceChat.pickAndProcess()
+            const result = await vc.pickAndProcess()
 
             if (result.error === 'cancelled') {
                 return
@@ -592,14 +595,14 @@ export default function VoiceChat() {
         } finally {
             abort()
             activeStreamRef.current = null
-            window.electronAPI.voiceChat.removeStreamListeners()
+            vc.removeStreamListeners()
             isProcessingRef.current = false
             setIsProcessing(false)
             setPipelineStep(null)
 
             // Stop engine if we started it just for this file
             if (!isListening) {
-                try { await window.electronAPI.voiceChat.stop() } catch { }
+                try { await vc.stop() } catch { }
             }
         }
     }
@@ -630,14 +633,14 @@ export default function VoiceChat() {
         try {
             // Ensure voice engine is started (with selected voice for TTS)
             if (!isListening) {
-                await window.electronAPI.voiceChat.start({
+                await vc.start({
                 })
             }
 
             setPipelineStep('llm')
             registerListeners()
 
-            const result = await window.electronAPI.voiceChat.processText(text)
+            const result = await vc.processText(text)
 
             await waitForPlayback()
 
@@ -652,13 +655,13 @@ export default function VoiceChat() {
         } finally {
             abort()
             activeStreamRef.current = null
-            window.electronAPI.voiceChat.removeStreamListeners()
+            vc.removeStreamListeners()
             isProcessingRef.current = false
             setIsProcessing(false)
             setPipelineStep(null)
 
             if (!isListening) {
-                try { await window.electronAPI.voiceChat.stop() } catch { }
+                try { await vc.stop() } catch { }
             }
         }
     }
